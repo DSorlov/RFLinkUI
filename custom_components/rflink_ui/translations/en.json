@@ -10,7 +10,7 @@
       },
       "manual_port": {
         "title": "Manual Port Entry",
-        "description": "Enter the path to your RFLink gateway (e.g., /dev/serial/by-id/...)",
+        "description": "Enter the serial path (e.g., /dev/serial/by-id/...) or ser2net socket (e.g., socket://192.168.1.50:2001)",
         "data": {
           "port": "Port"
         }

@@ -78,8 +78,11 @@ This integration uses the `serial_asyncio` library for fast, non-blocking commun
 
 1. Go to **Settings > Devices & Services > Add Integration**
 2. Search for **RFLink UI**
-3. Select your serial port from the dropdown (e.g., `/dev/ttyUSB0` or `COM3`) !! use the "serial by id" one if your home assistant hardware is changing the USB at reboot
-4. Submit to connect!
+3. Select your serial port from the dropdown (e.g., `/dev/ttyUSB0` or `COM3`) — it's recommended to use the `/dev/serial/by-id/...` path if available so device path changes after reboot don't disconnect your gateway.
+4. **Network / ser2net setup**: If connecting to a remote RFLink via `ser2net` or network socket, choose **Enter manually** and use the `socket://` scheme:
+   * **TCP Socket**: `socket://<IP_OR_HOSTNAME>:<PORT>` (e.g., `socket://192.168.1.50:2001`)
+   * **RFC 2217**: `rfc2217://<IP_OR_HOSTNAME>:<PORT>` (e.g., `rfc2217://192.168.1.50:2001`)
+5. Submit to connect!
 
 ### Adding Devices (Options Flow)
 
