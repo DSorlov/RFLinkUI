@@ -87,3 +87,37 @@ async def test_sensor_setup_and_updates(hass, mock_serial_connection):
 
     battery_state = hass.states.get("sensor.garden_sensor_battery")
     assert battery_state.state == "LOW"
+
+
+async def test_f007_th_channel_alias(hass, mock_serial_connection):
+    """Test F007_TH sensor setup using stable channel ID (F007_TH_CH7)."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"port": "COM1"},
+        options={
+            "switches": {},
+            "sensors": {"F007_TH_CH7": "Patio Sensor"},
+        },
+    )
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    # Simulate receiving RFLink packet with raw ID 45246 (lowest hex digit 6 -> CH7)
+    from custom_components.rflink_ui import _process_packet
+    _process_packet(hass, entry.entry_id, "20;62;F007_TH;ID=45246;TEMP=00d2;HUM=55;BAT=OK;")
+    await hass.async_block_till_done()
+
+    temp_state = hass.states.get("sensor.patio_sensor_temperature")
+    assert temp_state is not None
+    assert temp_state.state == "21.0"
+
+    hum_state = hass.states.get("sensor.patio_sensor_humidity")
+    assert hum_state is not None
+    assert hum_state.state == "55"
+
+    battery_state = hass.states.get("sensor.patio_sensor_battery")
+    assert battery_state is not None
+    assert battery_state.state == "OK"
+
