@@ -121,3 +121,35 @@ async def test_f007_th_channel_alias(hass, mock_serial_connection):
     assert battery_state is not None
     assert battery_state.state == "OK"
 
+
+async def test_rain_sensor_updates(hass, mock_serial_connection):
+    """Test rain sensor entity creation and RAIN packet parsing."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"port": "COM1"},
+        options={
+            "switches": {},
+            "sensors": {"Auriol Rain_0057": "Rain Gauge"},
+        },
+    )
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    rain_state = hass.states.get("sensor.rain_gauge_total_rain")
+    assert rain_state is not None
+    assert rain_state.state == "unknown"
+    assert rain_state.attributes.get("unit_of_measurement") == "mm"
+
+    # Simulate RFLink packet: RAIN=0064 -> hex 64 = 100 -> 10.0 mm
+    from custom_components.rflink_ui import _process_packet
+    _process_packet(hass, entry.entry_id, "20;3B;Auriol Rain;ID=0057;RAIN=0064;BAT=OK;")
+    await hass.async_block_till_done()
+
+    rain_state = hass.states.get("sensor.rain_gauge_total_rain")
+    assert rain_state is not None
+    assert rain_state.state == "10.0"
+    assert rain_state.attributes.get("battery") == "OK"
+
+
