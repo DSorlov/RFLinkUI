@@ -95,7 +95,7 @@ class RFLinkTransmitterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def _test_serial_port(self, port: str) -> None:
         """Test if the serial port can be opened."""
-        with serial.Serial(port, 57600, timeout=1):
+        with serial.serial_for_url(port, 57600, timeout=1):
             pass
 
 
