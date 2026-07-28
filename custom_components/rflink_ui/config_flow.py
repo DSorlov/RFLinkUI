@@ -95,7 +95,7 @@ class RFLinkTransmitterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def _test_serial_port(self, port: str) -> None:
         """Test if the serial port can be opened."""
-        with serial.Serial(port, 57600, timeout=1):
+        with serial.serial_for_url(port, 57600, timeout=1):
             pass
 
 
@@ -108,6 +108,7 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
         self.options["switches"] = dict(self.options.get("switches", {}))
         self.options["sensors"] = dict(self.options.get("sensors", {}))
         self.options["binary_sensors"] = dict(self.options.get("binary_sensors", {}))
+        self.options["lights"] = dict(self.options.get("lights", {}))
         self._temp_device_id = None
         self._temp_name = None
 
@@ -140,18 +141,22 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
                 if not name:
                     errors["name"] = "missing_name"
                 else:
-                    if selection.startswith("[Switch] "):
-                        dev_id = selection.replace("[Switch] ", "")
-                        self.options["switches"][dev_id] = name
-                        return self.async_create_entry(title="", data=self.options)
-                    elif selection.startswith("[Binary Sensor] "):
-                        dev_id = selection.replace("[Binary Sensor] ", "")
-                        self._temp_device_id = dev_id
-                        self._temp_name = name
-                        return await self.async_step_binary_sensor_options()
-                    elif selection.startswith("[Sensor] "):
-                        dev_id = selection.replace("[Sensor] ", "")
-                        self.options["sensors"][dev_id] = name
+                    self._temp_device_id = selection
+                    self._temp_name = name
+
+                    # Find the type of the device in recent_unknown_devices
+                    device_type = None
+                    if data:
+                        for dev_id, info in data.recent_unknown_devices:
+                            if dev_id == selection:
+                                device_type = info["type"]
+                                break
+
+                    if device_type == "switch":
+                        return await self.async_step_select_type()
+                    else:
+                        # Default is sensor
+                        self.options["sensors"][selection] = name
                         return self.async_create_entry(title="", data=self.options)
 
         devices_dict = {
@@ -164,21 +169,16 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
             configured_switches = self.options.get("switches", {})
             configured_sensors = self.options.get("sensors", {})
             configured_binary_sensors = self.options.get("binary_sensors", {})
+            configured_lights = self.options.get("lights", {})
             for dev_id, info in data.recent_unknown_devices:
                 if (
                     dev_id not in configured_switches
                     and dev_id not in configured_sensors
                     and dev_id not in configured_binary_sensors
+                    and dev_id not in configured_lights
                 ):
                     has_devices = True
-                    if info["type"] == "switch":
-                        key_sw = f"[Switch] {dev_id}"
-                        key_bs = f"[Binary Sensor] {dev_id}"
-                        devices_dict[key_sw] = f"{key_sw}"
-                        devices_dict[key_bs] = f"{key_bs}"
-                    else:
-                        key = f"[Sensor] {dev_id}"
-                        devices_dict[key] = f"{key}"
+                    devices_dict[dev_id] = dev_id
 
         if not has_devices:
             errors["base"] = "no_devices_found"
@@ -192,6 +192,31 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
                 }
             ),
             errors=errors,
+        )
+
+    async def async_step_select_type(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Select the type of device for the discovered switch command."""
+        if user_input is not None:
+            dev_type = user_input.get("device_type")
+            if dev_type == "Switch":
+                self.options["switches"][self._temp_device_id] = self._temp_name
+                return self.async_create_entry(title="", data=self.options)
+            elif dev_type == "Binary Sensor":
+                return await self.async_step_binary_sensor_options()
+            elif dev_type == "Light":
+                return await self.async_step_light_options()
+
+        return self.async_show_form(
+            step_id="select_type",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("device_type", default="Switch"): vol.In(
+                        ["Switch", "Binary Sensor", "Light"]
+                    ),
+                }
+            ),
         )
 
     async def async_step_add_manual(
@@ -210,6 +235,10 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
                 self._temp_device_id = dev_id
                 self._temp_name = name
                 return await self.async_step_binary_sensor_options()
+            elif dev_type == "Light":
+                self._temp_device_id = dev_id
+                self._temp_name = name
+                return await self.async_step_light_options()
             else:
                 self.options["sensors"][dev_id] = name
                 return self.async_create_entry(title="", data=self.options)
@@ -219,7 +248,7 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
             data_schema=vol.Schema(
                 {
                     vol.Required("device_type", default="Switch"): vol.In(
-                        ["Switch", "Sensor", "Binary Sensor"]
+                        ["Switch", "Sensor", "Binary Sensor", "Light"]
                     ),
                     vol.Required("device_id"): str,
                     vol.Required("name"): str,
@@ -294,6 +323,31 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
             ),
         )
 
+    async def async_step_light_options(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Configure light specific options."""
+        if user_input is not None:
+            light_type = user_input.get("type")
+
+            # Save to options dict
+            self.options["lights"][self._temp_device_id] = {
+                "name": self._temp_name,
+                "type": light_type,
+            }
+            return self.async_create_entry(title="", data=self.options)
+
+        return self.async_show_form(
+            step_id="light_options",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("type", default="dimmable"): vol.In(
+                        ["dimmable", "hybrid", "switchable", "toggle"]
+                    ),
+                }
+            ),
+        )
+
     async def async_step_modify(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
@@ -301,6 +355,7 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
         configured_switches = self.options.get("switches", {})
         configured_sensors = self.options.get("sensors", {})
         configured_binary_sensors = self.options.get("binary_sensors", {})
+        configured_lights = self.options.get("lights", {})
 
         all_devices = {}
         for dev_id, name in configured_switches.items():
@@ -308,6 +363,9 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
         for dev_id, config in configured_binary_sensors.items():
             name = config.get("name") if isinstance(config, dict) else config
             all_devices[f"[Binary Sensor] {dev_id}"] = f"{name} ({dev_id})"
+        for dev_id, config in configured_lights.items():
+            name = config.get("name") if isinstance(config, dict) else config
+            all_devices[f"[Light] {dev_id}"] = f"{name} ({dev_id})"
         for dev_id, name in configured_sensors.items():
             all_devices[f"[Sensor] {dev_id}"] = f"{name} ({dev_id})"
 
@@ -341,6 +399,12 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
                 if config:
                     self.options["binary_sensors"][new_dev_id] = config
                     device_type = "binary_sensor"
+            elif selection.startswith("[Light] "):
+                old_dev_id = selection.replace("[Light] ", "")
+                config = self.options["lights"].pop(old_dev_id, None)
+                if config:
+                    self.options["lights"][new_dev_id] = config
+                    device_type = "light"
             elif selection.startswith("[Sensor] "):
                 old_dev_id = selection.replace("[Sensor] ", "")
                 name = self.options["sensors"].pop(old_dev_id, None)
@@ -377,9 +441,19 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
                         ent_reg.async_update_entity(
                             ent_entry, new_unique_id=new_unique_id
                         )
+                elif device_type == "light":
+                    old_unique_id = f"rflink_light_{old_dev_id}"
+                    new_unique_id = f"rflink_light_{new_dev_id}"
+                    ent_entry = ent_reg.async_get_entity_id(
+                        "light", DOMAIN, old_unique_id
+                    )
+                    if ent_entry:
+                        ent_reg.async_update_entity(
+                            ent_entry, new_unique_id=new_unique_id
+                        )
                 else:
-                    # For sensors, there are usually three: temperature, humidity and battery
-                    for s_type in ["temperature", "humidity", "battery"]:
+                    # For sensors: temperature, humidity, battery, total_rain
+                    for s_type in ["temperature", "humidity", "battery", "total_rain"]:
                         old_unique_id = f"rflink_sensor_{s_type}_{old_dev_id}"
                         new_unique_id = f"rflink_sensor_{s_type}_{new_dev_id}"
                         ent_entry = ent_reg.async_get_entity_id(
@@ -410,6 +484,7 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
         configured_switches = self.options.get("switches", {})
         configured_sensors = self.options.get("sensors", {})
         configured_binary_sensors = self.options.get("binary_sensors", {})
+        configured_lights = self.options.get("lights", {})
 
         all_devices = {}
         for dev_id, name in configured_switches.items():
@@ -417,6 +492,9 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
         for dev_id, config in configured_binary_sensors.items():
             name = config.get("name") if isinstance(config, dict) else config
             all_devices[f"[Binary Sensor] {dev_id}"] = f"{name} ({dev_id})"
+        for dev_id, config in configured_lights.items():
+            name = config.get("name") if isinstance(config, dict) else config
+            all_devices[f"[Light] {dev_id}"] = f"{name} ({dev_id})"
         for dev_id, name in configured_sensors.items():
             all_devices[f"[Sensor] {dev_id}"] = f"{name} ({dev_id})"
 
@@ -431,6 +509,9 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
             elif selection.startswith("[Binary Sensor] "):
                 dev_id = selection.replace("[Binary Sensor] ", "")
                 self.options["binary_sensors"].pop(dev_id, None)
+            elif selection.startswith("[Light] "):
+                dev_id = selection.replace("[Light] ", "")
+                self.options["lights"].pop(dev_id, None)
             elif selection.startswith("[Sensor] "):
                 dev_id = selection.replace("[Sensor] ", "")
                 self.options["sensors"].pop(dev_id, None)

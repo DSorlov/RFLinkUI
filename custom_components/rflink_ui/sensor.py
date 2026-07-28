@@ -10,6 +10,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     UnitOfTemperature,
+    UnitOfPrecipitationDepth,
     PERCENTAGE,
 )
 from homeassistant.core import HomeAssistant, callback
@@ -35,6 +36,7 @@ async def async_setup_entry(
         entities.append(RFLinkSensor(entry.entry_id, device_id, name, "temperature"))
         entities.append(RFLinkSensor(entry.entry_id, device_id, name, "humidity"))
         entities.append(RFLinkSensor(entry.entry_id, device_id, name, "battery"))
+        entities.append(RFLinkSensor(entry.entry_id, device_id, name, "total_rain"))
 
     if entities:
         async_add_entities(entities)
@@ -68,6 +70,11 @@ class RFLinkSensor(RestoreSensor):
         elif sensor_type == "battery":
             self._attr_name = "Battery"
             self._attr_icon = "mdi:battery"
+        elif sensor_type in ["total_rain", "rain"]:
+            self._attr_name = "Total Rain"
+            self._attr_device_class = SensorDeviceClass.PRECIPITATION
+            self._attr_state_class = SensorStateClass.TOTAL_INCREASING
+            self._attr_native_unit_of_measurement = UnitOfPrecipitationDepth.MILLIMETERS
         else:
             self._attr_name = sensor_type.capitalize()
 
@@ -156,13 +163,27 @@ class RFLinkSensor(RestoreSensor):
                 self._attr_native_value = data_dict["BAT"]
                 has_update = True
 
+        elif self._sensor_type in ["total_rain", "rain"]:
+            if "RAIN" in data_dict:
+                try:
+                    rain_hex = data_dict["RAIN"]
+                    rain_int = int(rain_hex, 16)
+                    self._attr_native_value = rain_int / 10.0
+                    has_update = True
+                except ValueError:
+                    try:
+                        self._attr_native_value = float(data_dict["RAIN"]) / 10.0
+                        has_update = True
+                    except ValueError:
+                        attributes["rain_raw"] = data_dict["RAIN"]
+
         if "BAT" in data_dict:
             attributes["battery"] = data_dict["BAT"]
             has_update = True
 
         # Store any other unknown values
         for key, value in data_dict.items():
-            if key not in ["ID", "TEMP", "HUM", "BAT"]:
+            if key not in ["ID", "TEMP", "HUM", "BAT", "RAIN"]:
                 attributes[key.lower()] = value
                 has_update = True
 

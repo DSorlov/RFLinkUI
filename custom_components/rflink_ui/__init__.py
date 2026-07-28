@@ -20,6 +20,7 @@ PLATFORMS: list[Platform] = [
     Platform.SWITCH,
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
+    Platform.LIGHT,
 ]
 
 
@@ -75,6 +76,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         set(entry.options.get("switches", {}).keys())
         | set(entry.options.get("sensors", {}).keys())
         | set(entry.options.get("binary_sensors", {}).keys())
+        | set(entry.options.get("lights", {}).keys())
     )
 
     for ent in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
@@ -203,6 +205,7 @@ def _process_packet(hass: HomeAssistant, entry_id: str, decoded_line: str) -> No
         if not protocol or not device_id:
             return
 
+        raw_device_id = None
         if "CMD" in data_dict:
             # It's a switch
             switch = data_dict.get("SWITCH", "0")
@@ -210,8 +213,17 @@ def _process_packet(hass: HomeAssistant, entry_id: str, decoded_line: str) -> No
             device_type = "switch"
         else:
             # It's a sensor
-            full_device_id = f"{protocol}_{device_id}"
             device_type = "sensor"
+            raw_device_id = None
+            if protocol == "F007_TH" and device_id:
+                try:
+                    ch = (int(device_id[-1], 16) & 0x07) + 1
+                    full_device_id = f"{protocol}_CH{ch}"
+                    raw_device_id = f"{protocol}_{device_id}"
+                except (ValueError, IndexError):
+                    full_device_id = f"{protocol}_{device_id}"
+            else:
+                full_device_id = f"{protocol}_{device_id}"
 
         _LOGGER.info(
             "RFLink dispatcher sending to 'rflink_update_%s' with data: %s",
@@ -219,8 +231,12 @@ def _process_packet(hass: HomeAssistant, entry_id: str, decoded_line: str) -> No
             data_dict,
         )
 
-        # Broadcast state change (sending the full dictionary)
+        # Broadcast state change for primary device ID (channel ID for F007_TH)
         async_dispatcher_send(hass, f"rflink_update_{full_device_id}", data_dict)
+
+        # Broadcast state change for raw device ID if available (legacy support)
+        if raw_device_id:
+            async_dispatcher_send(hass, f"rflink_update_{raw_device_id}", data_dict)
 
         # Add to recent unknown devices buffer for UI learning
         data = hass.data[DOMAIN].get(entry_id)
@@ -228,11 +244,11 @@ def _process_packet(hass: HomeAssistant, entry_id: str, decoded_line: str) -> No
             buffer = data.recent_unknown_devices
             recent_dict = dict(buffer)
 
-            # Remove it if it exists so it moves to the end of the dict (most recent)
+            # Remove primary device ID if it exists so it moves to the end (most recent)
             if full_device_id in recent_dict:
                 del recent_dict[full_device_id]
-
             recent_dict[full_device_id] = {"type": device_type, "data": data_dict}
+
             data.recent_unknown_devices = deque(recent_dict.items(), maxlen=50)
 
 
