@@ -31,8 +31,6 @@ from the Home Assistant interface.
   that address.
 - **Stable F007_TH identities.** Ambient Weather / Froggit sensors are addressed
   by their channel, so a battery change no longer creates a new device.
-- **Local brand images.** Icons and logos ship with the integration, no
-  round trip through the brands repository.
 
 ---
 
