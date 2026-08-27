@@ -58,7 +58,7 @@ from the Home Assistant interface.
 ## Requirements
 
 - Home Assistant **2026.5.4** or newer
-- Python 3.13 or newer
+- Python 3.14 or newer
 - An Arduino based RFLink gateway on USB, or reachable over `ser2net`
 
 `pyserial-asyncio-fast` and `pyserial` are installed automatically.

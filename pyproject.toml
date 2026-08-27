@@ -4,7 +4,7 @@ version = "2.0.0"
 description = "A fully UI driven Home Assistant integration for Arduino RFLink gateways"
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -13,7 +13,7 @@ addopts = "-q"
 filterwarnings = ["ignore::pytest.PytestAssertRewriteWarning"]
 
 [tool.ruff]
-target-version = "py313"
+target-version = "py314"
 line-length = 88
 
 [tool.ruff.lint]
