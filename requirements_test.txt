@@ -11,4 +11,4 @@ ruff==0.14.2
 codespell==2.4.1
 
 # Only needed by scripts/generate_brand.py
-Pillow>=11.0.0
+Pillow>=12.3.0
