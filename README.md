@@ -9,6 +9,9 @@ integration for Arduino RFLink gateways. Unlike the legacy YAML based `rflink`
 integration, every device is added, renamed, reconfigured and removed straight
 from the Home Assistant interface.
 
+> Based on [guanaco0403/Home-Assistant-Rflink-UI](https://github.com/guanaco0403/Home-Assistant-Rflink-UI),
+> rebuilt for current Home Assistant standards. See [CHANGELOG.md](CHANGELOG.md).
+
 ---
 
 ## Highlights
@@ -69,10 +72,10 @@ from the Home Assistant interface.
 
 ### HACS (recommended)
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?repository=Home-Assistant-Rflink-UI&owner=guanaco0403&category=integration)
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?repository=RFLinkUI&owner=DSorlov&category=integration)
 
 1. **HACS → Integrations → ⋮ → Custom repositories**
-2. Add `https://github.com/guanaco0403/Home-Assistant-Rflink-UI` as an **Integration**
+2. Add `https://github.com/DSorlov/RFLinkUI` as an **Integration**
 3. Install **RFLink UI** and restart Home Assistant
 
 ### Manual
@@ -246,10 +249,13 @@ prefer not to install the dependencies globally.
 Pull requests are welcome. Adding a new measurement usually means one entry in
 `SENSOR_TYPES` in `custom_components/rflink_ui/sensor.py` plus a name in
 `strings.json`; please include the raw packet from your device in the PR.
-
 ## Credits
 
-- [@guanaco0403](https://github.com/guanaco0403) — author and maintainer
+This project started from
+[guanaco0403/Home-Assistant-Rflink-UI](https://github.com/guanaco0403/Home-Assistant-Rflink-UI)
+and keeps its full history. All credit for the original integration goes there.
+
+- [@guanaco0403](https://github.com/guanaco0403) — original author
 - [@bazeman101](https://github.com/bazeman101) — cover platform
 - Value decoding follows the [python-rflink](https://github.com/aequitas/python-rflink) reference implementation
 
