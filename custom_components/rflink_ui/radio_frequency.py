@@ -1,113 +1,128 @@
+"""Radio frequency transmitter platform for RFLink UI."""
+
+from __future__ import annotations
+
 import logging
-import voluptuous as vol
 from typing import Any
 
-from homeassistant.helpers import entity_platform
-import homeassistant.helpers.config_validation as cv
-from homeassistant.util import dt as dt_util
+from homeassistant.components.radio_frequency import (
+    RadioFrequencyCommand,
+    RadioFrequencyTransmitterEntity,
+)
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import config_validation as cv, entity_platform
+from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+import voluptuous as vol
 
-
-try:
-    from homeassistant.components.radio_frequency import (
-        RadioFrequencyTransmitterEntity as RadioFrequencyEntity,
-    )
-
-    HAS_RF = True
-except ImportError:
-    # Fallback for HA versions before 2026.5
-    from homeassistant.helpers.entity import Entity as RadioFrequencyEntity
-
-    HAS_RF = False
-
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-
-from . import DOMAIN
+from .const import (
+    ATTR_COMMAND,
+    ATTR_PACKET,
+    ATTR_PROTOCOL,
+    DOMAIN,
+    SERVICE_SEND_COMMAND,
+    SERVICE_SEND_RAW,
+    SIGNAL_CONNECTION,
+)
+from .gateway import RFLinkConfigEntry, RFLinkGateway
 
 _LOGGER = logging.getLogger(__name__)
+
+#: RFLink gateways are 433.92 MHz OOK transceivers.
+FREQUENCY_HZ = 433_920_000
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: RFLinkConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up the RFLink radio_frequency platform."""
-    data = hass.data[DOMAIN][entry.entry_id]
-
-    async_add_entities([RFLinkTransmitterDevice(data, entry.entry_id, entry.title)])
+    """Set up the RFLink transmitter entity and its actions."""
+    async_add_entities([RFLinkTransmitter(entry.runtime_data)])
 
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
-        "send_command",
+        SERVICE_SEND_COMMAND,
         {
-            vol.Required("protocol"): cv.string,
-            vol.Required("command"): cv.string,
+            vol.Required(ATTR_PROTOCOL): cv.string,
+            vol.Required(ATTR_COMMAND): cv.string,
         },
-        "async_send_rf_command",
+        "async_send_rflink_command",
+    )
+    platform.async_register_entity_service(
+        SERVICE_SEND_RAW,
+        {vol.Required(ATTR_PACKET): cv.string},
+        "async_send_rflink_raw",
     )
 
 
-class RFLinkTransmitterDevice(RadioFrequencyEntity):
-    """RFLink Transmitter Entity."""
+class RFLinkTransmitter(RadioFrequencyTransmitterEntity):
+    """The transmitter side of an RFLink gateway."""
 
     _attr_has_entity_name = True
-    _attr_name = "Transmitter"
+    _attr_translation_key = "transmitter"
     _attr_should_poll = False
-    _attr_state = "ready"
 
-    def __init__(self, data: Any, entry_id: str, title: str) -> None:
+    def __init__(self, gateway: RFLinkGateway) -> None:
         """Initialize the transmitter."""
-        self._data = data
-        self._attr_unique_id = f"{entry_id}_rf_transmitter"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry_id)},
-            "name": title,
-            "manufacturer": "RFLink",
-            "model": "Arduino RFLink",
-        }
-        self._attr_supported_frequencies = [433.92]
+        self._gateway = gateway
+        self._attr_unique_id = f"{gateway.entry.entry_id}_rf_transmitter"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, gateway.entry.entry_id)},
+            name=gateway.entry.title,
+            manufacturer="RFLink",
+            model="Arduino RFLink",
+            serial_number=gateway.port,
+        )
 
     @property
-    def supported_frequencies(self) -> list[float]:
-        """Return the list of supported frequencies in MHz."""
-        return self._attr_supported_frequencies
+    def supported_frequency_ranges(self) -> list[tuple[int, int]]:
+        """Return the frequency range this gateway can transmit on."""
+        return [(FREQUENCY_HZ, FREQUENCY_HZ)]
 
     @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return extra state attributes."""
-        return {
-            "supported_frequencies": self.supported_frequencies,
-        }
+    def available(self) -> bool:
+        """Return whether the gateway is reachable."""
+        return self._gateway.is_connected
 
-    if HAS_RF:
+    async def async_added_to_hass(self) -> None:
+        """Track the gateway connection state."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                SIGNAL_CONNECTION.format(self._gateway.entry.entry_id),
+                self._handle_connection,
+            )
+        )
 
-        @property
-        def supported_frequency_ranges(self) -> list[tuple[int, int]]:
-            """Return list of (min_hz, max_hz) tuples."""
-            return [(433920000, 433920000)]
+    @callback
+    def _handle_connection(self, connected: bool) -> None:
+        self.async_write_ha_state()
 
-        async def async_send_command(self, command: Any) -> None:
-            """Send an RF command."""
-            pass
+    async def async_send_command(self, command: RadioFrequencyCommand) -> None:
+        """Raw timing based transmission is not supported by RFLink."""
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="raw_timings_unsupported",
+        )
 
-    async def async_send_rf_command(
+    async def async_send_rflink_command(
         self, protocol: str, command: str, **kwargs: Any
     ) -> None:
-        """Send an RF command via RFLink."""
-        # RFLink serial syntax: "10;{protocol};{command};\n"
-        rflink_command = f"10;{protocol};{command};\n"
+        """Send a protocol command, for example ``Unitec`` / ``1a4a;4;ON``."""
+        await self.async_send_rflink_raw(f"10;{protocol};{command};")
 
+    async def async_send_rflink_raw(self, packet: str, **kwargs: Any) -> None:
+        """Send a complete packet such as ``10;GPIOset;32;0;ON;``."""
         try:
-            await self._data.async_send_command(rflink_command)
-            if HAS_RF:
-                self._RadioFrequencyTransmitterEntity__last_command_sent = (
-                    dt_util.utcnow().isoformat(timespec="milliseconds")
-                )
-            else:
-                self._attr_state = "ready"
-            self.async_write_ha_state()
-        except Exception as err:
-            _LOGGER.error("Failed to send RF command: %s", err)
-            raise
+            await self._gateway.async_send_raw(packet)
+        except (ConnectionError, OSError) as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="send_failed",
+                translation_placeholders={"error": str(err)},
+            ) from err
+        self.async_write_ha_state()

@@ -1,0 +1,340 @@
+{
+  "entity": {
+    "binary_sensor": {
+      "connection": { "name": "Anslutningsstatus" },
+      "motion": { "name": "Rörelse" },
+      "smoke": { "name": "Rök" }
+    },
+    "radio_frequency": {
+      "transmitter": { "name": "Sändare" }
+    },
+    "sensor": {
+      "average_windspeed": { "name": "Medelvindhastighet" },
+      "barometric_pressure": { "name": "Lufttryck" },
+      "battery": {
+        "name": "Batteristatus",
+        "state": { "ok": "OK", "low": "Lågt", "unknown": "Okänt" }
+      },
+      "co2_air_quality": { "name": "Koldioxid" },
+      "current_phase_1": { "name": "Ström fas 1" },
+      "current_phase_2": { "name": "Ström fas 2" },
+      "current_phase_3": { "name": "Ström fas 3" },
+      "distance": { "name": "Avstånd" },
+      "doorbell_melody": { "name": "Ringsignal" },
+      "humidity": { "name": "Luftfuktighet" },
+      "humidity_status": {
+        "name": "Fuktstatus",
+        "state": {
+          "normal": "Normal",
+          "comfortable": "Behaglig",
+          "dry": "Torr",
+          "wet": "Fuktig",
+          "unknown": "Okänd"
+        }
+      },
+      "kilowatt": { "name": "Effekt" },
+      "last_seen": { "name": "Senast sedd" },
+      "light_intensity": { "name": "Ljusstyrka" },
+      "meter_value": { "name": "Mätarställning" },
+      "noise_level": { "name": "Ljudnivå" },
+      "rain_rate": { "name": "Nederbördsintensitet" },
+      "temperature": { "name": "Temperatur" },
+      "total_rain": { "name": "Total nederbörd" },
+      "uv_intensity": { "name": "UV-index" },
+      "voltage": { "name": "Spänning" },
+      "watt": { "name": "Effekt" },
+      "weather_forecast": {
+        "name": "Väderprognos",
+        "state": {
+          "no_info": "Ingen information",
+          "sunny": "Soligt",
+          "partly_cloudy": "Delvis molnigt",
+          "cloudy": "Molnigt",
+          "rain": "Regn",
+          "unknown": "Okänd"
+        }
+      },
+      "windchill": { "name": "Vindavkylning" },
+      "winddirection": { "name": "Vindriktning" },
+      "windgusts": { "name": "Vindbyar" },
+      "windspeed": { "name": "Vindhastighet" },
+      "windtemp": { "name": "Vindmätarens temperatur" }
+    }
+  },
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "Anslut din RFLink-gateway",
+        "description": "Välj den serieport din RFLink-gateway sitter på. Använd helst en `/dev/serial/by-id/…`-sökväg, den överlever omstart även om enhetsnumret ändras.",
+        "data": { "port": "Port" },
+        "data_description": {
+          "port": "Välj en upptäckt port, eller \"Ange manuellt\" för en nätverksgateway."
+        }
+      },
+      "manual_port": {
+        "title": "Ange porten manuellt",
+        "description": "Ange en serieport som `/dev/serial/by-id/usb-1a86_USB2.0-Serial-if00-port0`, eller en nätverksadress som `socket://192.168.1.50:2001` (ser2net) eller `rfc2217://192.168.1.50:2001`.",
+        "data": { "port": "Port" }
+      },
+      "usb_confirm": {
+        "title": "RFLink-gateway hittad",
+        "description": "Vill du lägga till RFLink-gatewayen på {port}?"
+      },
+      "reconfigure": {
+        "title": "Byt serieport",
+        "data": { "port": "Port" }
+      }
+    },
+    "error": {
+      "cannot_connect": "Porten kunde inte öppnas. Kontrollera att gatewayen är ansluten och inte används av en annan integration."
+    },
+    "abort": {
+      "already_configured": "Den här gatewayen är redan tillagd.",
+      "reconfigure_successful": "Omkonfigurationen lyckades.",
+      "wrong_port": "Porten tillhör en annan gateway."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Inställningar för gateway",
+        "data": {
+          "automatic_add": "Lägg till nya enheter automatiskt",
+          "signal_repetitions": "Antal upprepningar",
+          "keepalive": "Intervall för keep-alive"
+        },
+        "data_description": {
+          "automatic_add": "Skapa en enhet så snart en okänd 433 MHz-signal tas emot. Stäng av igen när dina enheter är hittade.",
+          "signal_repetitions": "Hur många gånger varje utgående kommando skickas. Höj för enheter som missar kommandon.",
+          "keepalive": "Hur ofta en PING skickas för att upptäcka en död anslutning."
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "switch": {
+      "entry_type": "Strömbrytare",
+      "initiate_flow": {
+        "user": "Lägg till strömbrytare",
+        "reconfigure": "Konfigurera om strömbrytare"
+      },
+      "step": {
+        "user": {
+          "title": "Lägg till en strömbrytare",
+          "description": "Tryck först på en knapp på din fjärrkontroll och välj sedan enheten nedan. Du kan också skriva in ett ID manuellt, till exempel `NewKaku_008cbc9b_1`.",
+          "data": {
+            "device_id": "RFLink-ID",
+            "name": "Namn",
+            "aliases": "Ytterligare ID:n"
+          },
+          "data_description": {
+            "aliases": "Extra ID:n som styr samma enhet, för protokoll som RFLink ibland avkodar olika."
+          }
+        },
+        "reconfigure": {
+          "title": "Konfigurera om strömbrytare",
+          "data": {
+            "device_id": "RFLink-ID",
+            "name": "Namn",
+            "aliases": "Ytterligare ID:n"
+          }
+        }
+      },
+      "abort": { "reconfigure_successful": "Omkonfigurationen lyckades." }
+    },
+    "light": {
+      "entry_type": "Ljus",
+      "initiate_flow": {
+        "user": "Lägg till ljus",
+        "reconfigure": "Konfigurera om ljus"
+      },
+      "step": {
+        "user": {
+          "title": "Lägg till ett ljus",
+          "description": "Tryck först på en knapp på din fjärrkontroll och välj sedan enheten nedan.",
+          "data": {
+            "device_id": "RFLink-ID",
+            "name": "Namn",
+            "light_type": "Kommandotyp",
+            "aliases": "Ytterligare ID:n"
+          },
+          "data_description": {
+            "light_type": "Hur kommandon skickas: dimbar skickar nivåer, hybrid skickar nivå följt av ON, ON/OFF skickar bara på och av, växla skickar ON för att byta läge.",
+            "aliases": "Extra ID:n som styr samma enhet."
+          }
+        },
+        "reconfigure": {
+          "title": "Konfigurera om ljus",
+          "data": {
+            "device_id": "RFLink-ID",
+            "name": "Namn",
+            "light_type": "Kommandotyp",
+            "aliases": "Ytterligare ID:n"
+          }
+        }
+      },
+      "abort": { "reconfigure_successful": "Omkonfigurationen lyckades." }
+    },
+    "cover": {
+      "entry_type": "Persienn",
+      "initiate_flow": {
+        "user": "Lägg till persienn",
+        "reconfigure": "Konfigurera om persienn"
+      },
+      "step": {
+        "user": {
+          "title": "Lägg till en persienn",
+          "description": "Rulljalusier och markiser. Tryck först på en knapp på din fjärrkontroll och välj sedan enheten nedan.",
+          "data": {
+            "device_id": "RFLink-ID",
+            "name": "Namn",
+            "inverted": "Byt plats på öppna och stäng",
+            "aliases": "Ytterligare ID:n"
+          },
+          "data_description": {
+            "inverted": "Slå på för protokoll där UP och DOWN är omvända, till exempel vissa KlikAanKlikUit-motorer."
+          }
+        },
+        "reconfigure": {
+          "title": "Konfigurera om persienn",
+          "data": {
+            "device_id": "RFLink-ID",
+            "name": "Namn",
+            "inverted": "Byt plats på öppna och stäng",
+            "aliases": "Ytterligare ID:n"
+          }
+        }
+      },
+      "abort": { "reconfigure_successful": "Omkonfigurationen lyckades." }
+    },
+    "binary_sensor": {
+      "entry_type": "Binär sensor",
+      "initiate_flow": {
+        "user": "Lägg till binär sensor",
+        "reconfigure": "Konfigurera om binär sensor"
+      },
+      "step": {
+        "user": {
+          "title": "Lägg till en binär sensor",
+          "description": "Rörelsedetektorer, dörr- och fönsterkontakter, brandvarnare och dörrklockor.",
+          "data": {
+            "device_id": "RFLink-ID",
+            "name": "Namn",
+            "device_class": "Enhetsklass",
+            "off_delay": "Fördröjning till av",
+            "aliases": "Ytterligare ID:n"
+          },
+          "data_description": {
+            "off_delay": "Slå av sensorn automatiskt efter så här många sekunder. Använd för enheter som bara skickar en utlösning, till exempel PIR-sensorer."
+          }
+        },
+        "reconfigure": {
+          "title": "Konfigurera om binär sensor",
+          "data": {
+            "device_id": "RFLink-ID",
+            "name": "Namn",
+            "device_class": "Enhetsklass",
+            "off_delay": "Fördröjning till av",
+            "aliases": "Ytterligare ID:n"
+          }
+        }
+      },
+      "abort": { "reconfigure_successful": "Omkonfigurationen lyckades." }
+    },
+    "sensor": {
+      "entry_type": "Sensor",
+      "initiate_flow": {
+        "user": "Lägg till sensor",
+        "reconfigure": "Konfigurera om sensor"
+      },
+      "step": {
+        "user": {
+          "title": "Lägg till en sensor",
+          "description": "Väderstationer, termometrar, regnmätare och elmätare. Varje mätvärde enheten rapporterar blir en egen entitet.",
+          "data": {
+            "device_id": "RFLink-ID",
+            "name": "Namn",
+            "force_update": "Uppdatera vid varje avläsning",
+            "aliases": "Ytterligare ID:n"
+          },
+          "data_description": {
+            "force_update": "Skriv ett nytt tillstånd även när värdet är oförändrat, så att \"senast uppdaterad\" alltid speglar senaste avläsningen. Ökar databasanvändningen.",
+            "aliases": "Extra ID:n för samma fysiska sensor, för protokoll som RFLink ibland avkodar som ett annat märke."
+          }
+        },
+        "reconfigure": {
+          "title": "Konfigurera om sensor",
+          "data": {
+            "device_id": "RFLink-ID",
+            "name": "Namn",
+            "force_update": "Uppdatera vid varje avläsning",
+            "aliases": "Ytterligare ID:n"
+          }
+        }
+      },
+      "abort": { "reconfigure_successful": "Omkonfigurationen lyckades." }
+    }
+  },
+  "selector": {
+    "light_type": {
+      "options": {
+        "dimmable": "Dimbar",
+        "hybrid": "Hybrid (nivå, sedan ON)",
+        "switchable": "Endast på/av",
+        "toggle": "Växla"
+      }
+    }
+  },
+  "services": {
+    "send_command": {
+      "name": "Skicka RF-kommando",
+      "description": "Skickar ett protokollkommando via RFLink-gatewayen.",
+      "fields": {
+        "protocol": {
+          "name": "Protokoll",
+          "description": "RFLink-protokollets namn, till exempel Kaku, NewKaku eller Unitec."
+        },
+        "command": {
+          "name": "Kommando",
+          "description": "Resten av paketet, till exempel 1a4a;4;ON."
+        }
+      }
+    },
+    "send_raw": {
+      "name": "Skicka rått paket",
+      "description": "Skickar ett komplett RFLink-paket utan bearbetning. Användbart för gateway-kommandon som GPIOset.",
+      "fields": {
+        "packet": {
+          "name": "Paket",
+          "description": "Hela paketet, till exempel 10;GPIOset;32;0;ON;."
+        }
+      }
+    },
+    "simulate_packet": {
+      "name": "Simulera paket",
+      "description": "Matar in ett paket i integrationen som om det tagits emot, för test och för att hitta enheter utan hårdvara.",
+      "fields": {
+        "packet": {
+          "name": "Paket",
+          "description": "Det råa RFLink-paketet, till exempel 20;01;Kaku;ID=1234abcd;SWITCH=1;CMD=ON;."
+        },
+        "config_entry_id": {
+          "name": "Gateway",
+          "description": "Vilken gateway som ska ta emot paketet. Som standard alla."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "send_failed": {
+      "message": "Kunde inte skicka kommandot till RFLink-gatewayen: {error}"
+    },
+    "raw_timings_unsupported": {
+      "message": "RFLink-gateways kan inte sända råa tidssekvenser. Använd åtgärden \"Skicka RF-kommando\" eller \"Skicka rått paket\" istället."
+    },
+    "no_loaded_gateway": {
+      "message": "Det finns ingen laddad RFLink-gateway att skicka paketet till."
+    }
+  }
+}

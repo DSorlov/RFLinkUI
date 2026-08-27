@@ -1,66 +1,126 @@
-"""Config flow for RFLink Transmitter integration."""
+"""Config flow for the RFLink UI integration."""
 
-from typing import Any
+from __future__ import annotations
 
 import glob
+from pathlib import Path
+from typing import Any
+
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    ConfigSubentryFlow,
+    OptionsFlow,
+    SubentryFlowResult,
+)
+from homeassistant.const import CONF_DEVICE_CLASS, CONF_NAME, CONF_PORT
+from homeassistant.core import callback
+from homeassistant.helpers.selector import (
+    BooleanSelector,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+    TextSelector,
+)
+from homeassistant.helpers.service_info.usb import UsbServiceInfo
 import serial
 import serial.tools.list_ports
 import voluptuous as vol
 
-from homeassistant import config_entries
-from homeassistant.const import CONF_PORT
-from homeassistant.core import callback
+from .const import (
+    CONF_ALIASES,
+    CONF_AUTOMATIC_ADD,
+    CONF_DEVICE_ID,
+    CONF_FORCE_UPDATE,
+    CONF_INVERTED,
+    CONF_KEEPALIVE,
+    CONF_LIGHT_TYPE,
+    CONF_OFF_DELAY,
+    CONF_SIGNAL_REPETITIONS,
+    CONFIG_ENTRY_VERSION,
+    DEFAULT_AUTOMATIC_ADD,
+    DEFAULT_BAUDRATE,
+    DEFAULT_SIGNAL_REPETITIONS,
+    DOMAIN,
+    KEEPALIVE_INTERVAL,
+    LIGHT_TYPE_DIMMABLE,
+    LIGHT_TYPES,
+    MANUAL_PORT,
+    SUBENTRY_TYPE_BINARY_SENSOR,
+    SUBENTRY_TYPE_COVER,
+    SUBENTRY_TYPE_LIGHT,
+    SUBENTRY_TYPE_SENSOR,
+    SUBENTRY_TYPE_SWITCH,
+)
 
-from . import DOMAIN
+
+def _test_serial_port(port: str) -> None:
+    """Open the port to verify it is reachable."""
+    with serial.serial_for_url(port, DEFAULT_BAUDRATE, timeout=1):
+        pass
 
 
-class RFLinkTransmitterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for RFLink Transmitter."""
+class RFLinkConfigFlow(ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for RFLink UI."""
 
-    VERSION = 1
+    VERSION = CONFIG_ENTRY_VERSION
+
+    def __init__(self) -> None:
+        """Initialize the flow."""
+        self._discovered_port: str | None = None
 
     @staticmethod
     @callback
-    def async_get_options_flow(
-        config_entry: config_entries.ConfigEntry,
-    ) -> config_entries.OptionsFlow:
-        """Get the options flow for this handler."""
-        return RFLinkOptionsFlowHandler(config_entry)
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Return the options flow."""
+        return RFLinkOptionsFlow()
+
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(
+        cls, config_entry: ConfigEntry
+    ) -> dict[str, type[ConfigSubentryFlow]]:
+        """Return the device types that can be added to a gateway."""
+        return {
+            SUBENTRY_TYPE_SWITCH: SwitchSubentryFlow,
+            SUBENTRY_TYPE_LIGHT: LightSubentryFlow,
+            SUBENTRY_TYPE_COVER: CoverSubentryFlow,
+            SUBENTRY_TYPE_BINARY_SENSOR: BinarySensorSubentryFlow,
+            SUBENTRY_TYPE_SENSOR: SensorSubentryFlow,
+        }
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.ConfigFlowResult:
+    ) -> ConfigFlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
+
         if user_input is not None:
             port = user_input[CONF_PORT]
-            if port == "Enter manually":
+            if port == MANUAL_PORT:
                 return await self.async_step_manual_port()
-            try:
-                # Do this in an executor to avoid blocking the event loop
-                await self.hass.async_add_executor_job(self._test_serial_port, port)
-            except Exception:  # pylint: disable=broad-except
-                errors["base"] = "cannot_connect"
-            else:
-                return self.async_create_entry(
-                    title=f"RFLink ({port})", data=user_input
-                )
+            if not (errors := await self._async_validate(port)):
+                return await self._async_create(port)
 
-        ports = await self.hass.async_add_executor_job(serial.tools.list_ports.comports)
-        port_list = [port.device for port in ports]
-
-        def _get_by_id_ports() -> list[str]:
-            return glob.glob("/dev/serial/by-id/*")
-
-        by_id_ports = await self.hass.async_add_executor_job(_get_by_id_ports)
-        port_list.extend(by_id_ports)
-        port_list.append("Enter manually")
+        port_list = await self.hass.async_add_executor_job(_available_ports)
+        options = [SelectOptionDict(value=port, label=port) for port in port_list]
+        options.append(SelectOptionDict(value=MANUAL_PORT, label="Enter manually…"))
 
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_PORT, default=port_list[0]): vol.In(port_list),
+                    vol.Required(CONF_PORT): SelectSelector(
+                        SelectSelectorConfig(
+                            options=options, mode=SelectSelectorMode.DROPDOWN
+                        )
+                    )
                 }
             ),
             errors=errors,
@@ -68,461 +128,358 @@ class RFLinkTransmitterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_manual_port(
         self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.ConfigFlowResult:
-        """Handle manual port entry."""
+    ) -> ConfigFlowResult:
+        """Handle manual port or network URL entry."""
         errors: dict[str, str] = {}
+
         if user_input is not None:
             port = user_input[CONF_PORT]
-            try:
-                # Do this in an executor to avoid blocking the event loop
-                await self.hass.async_add_executor_job(self._test_serial_port, port)
-            except Exception:  # pylint: disable=broad-except
-                errors["base"] = "cannot_connect"
-            else:
-                return self.async_create_entry(
-                    title=f"RFLink ({port})", data=user_input
-                )
+            if not (errors := await self._async_validate(port)):
+                return await self._async_create(port)
 
         return self.async_show_form(
             step_id="manual_port",
+            data_schema=vol.Schema({vol.Required(CONF_PORT): TextSelector()}),
+            errors=errors,
+        )
+
+    async def async_step_usb(self, discovery_info: UsbServiceInfo) -> ConfigFlowResult:
+        """Handle a gateway discovered on the USB bus."""
+        device = await self.hass.async_add_executor_job(
+            _serial_by_id, discovery_info.device
+        )
+        await self.async_set_unique_id(device)
+        self._abort_if_unique_id_configured(updates={CONF_PORT: device})
+        self._discovered_port = device
+        self.context["title_placeholders"] = {"name": device}
+        return await self.async_step_usb_confirm()
+
+    async def async_step_usb_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Confirm setup of a discovered gateway."""
+        assert self._discovered_port is not None
+        errors: dict[str, str] = {}
+
+        if user_input is not None and not (
+            errors := await self._async_validate(self._discovered_port)
+        ):
+            return await self._async_create(self._discovered_port)
+
+        return self.async_show_form(
+            step_id="usb_confirm",
+            description_placeholders={"port": self._discovered_port},
+            errors=errors,
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Change the serial port of an existing gateway."""
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            port = user_input[CONF_PORT]
+            if not (errors := await self._async_validate(port)):
+                await self.async_set_unique_id(port)
+                self._abort_if_unique_id_mismatch(reason="wrong_port")
+                return self.async_update_reload_and_abort(
+                    entry, data_updates={CONF_PORT: port}
+                )
+
+        return self.async_show_form(
+            step_id="reconfigure",
             data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_PORT): str,
-                }
+                {vol.Required(CONF_PORT, default=entry.data[CONF_PORT]): TextSelector()}
             ),
             errors=errors,
         )
 
-    def _test_serial_port(self, port: str) -> None:
-        """Test if the serial port can be opened."""
-        with serial.serial_for_url(port, 57600, timeout=1):
-            pass
+    async def _async_validate(self, port: str) -> dict[str, str]:
+        """Return form errors for a port that cannot be opened."""
+        try:
+            await self.hass.async_add_executor_job(_test_serial_port, port)
+        except (OSError, serial.SerialException, ValueError):
+            return {"base": "cannot_connect"}
+        return {}
+
+    async def _async_create(self, port: str) -> ConfigFlowResult:
+        """Create the config entry for a validated port."""
+        await self.async_set_unique_id(port)
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(title=f"RFLink ({port})", data={CONF_PORT: port})
 
 
-class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
-    """Handle options."""
+def _serial_by_id(device: str) -> str:
+    """Return the stable /dev/serial/by-id path for a device, if there is one."""
+    by_id = "/dev/serial/by-id"
+    if not Path(by_id).is_dir():
+        return device
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.options = dict(config_entry.options)
-        self.options["switches"] = dict(self.options.get("switches", {}))
-        self.options["sensors"] = dict(self.options.get("sensors", {}))
-        self.options["binary_sensors"] = dict(self.options.get("binary_sensors", {}))
-        self.options["lights"] = dict(self.options.get("lights", {}))
-        self._temp_device_id = None
-        self._temp_name = None
+    resolved = Path(device).resolve()
+    for candidate in sorted(Path(by_id).iterdir()):
+        if candidate.resolve() == resolved:
+            return str(candidate)
+    return device
+
+
+def _available_ports() -> list[str]:
+    """Return the serial ports that look usable."""
+    ports = [port.device for port in serial.tools.list_ports.comports()]
+    ports.extend(sorted(glob.glob("/dev/serial/by-id/*")))
+    return ports
+
+
+class RFLinkOptionsFlow(OptionsFlow):
+    """Handle gateway wide options."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.ConfigFlowResult:
-        """Manage the options."""
-        return self.async_show_menu(
+    ) -> ConfigFlowResult:
+        """Manage the gateway options."""
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+
+        options = self.config_entry.options
+        return self.async_show_form(
             step_id="init",
-            menu_options=["add_learned", "add_manual", "modify", "remove"],
-        )
-
-    async def async_step_add_learned(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.ConfigFlowResult:
-        """Add a recently seen device."""
-        errors: dict[str, str] = {}
-        data = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
-
-        if user_input is not None:
-            selection = user_input.get("device_id")
-            if selection == "clear":
-                if data:
-                    data.recent_unknown_devices.clear()
-                return await self.async_step_add_learned()
-            elif selection == "refresh":
-                return await self.async_step_add_learned()
-            else:
-                name = user_input.get("name")
-                if not name:
-                    errors["name"] = "missing_name"
-                else:
-                    self._temp_device_id = selection
-                    self._temp_name = name
-
-                    # Find the type of the device in recent_unknown_devices
-                    device_type = None
-                    if data:
-                        for dev_id, info in data.recent_unknown_devices:
-                            if dev_id == selection:
-                                device_type = info["type"]
-                                break
-
-                    if device_type == "switch":
-                        return await self.async_step_select_type()
-                    else:
-                        # Default is sensor
-                        self.options["sensors"][selection] = name
-                        return self.async_create_entry(title="", data=self.options)
-
-        devices_dict = {
-            "refresh": "Refresh list",
-            "clear": "Clear signals",
-        }
-
-        has_devices = False
-        if data:
-            configured_switches = self.options.get("switches", {})
-            configured_sensors = self.options.get("sensors", {})
-            configured_binary_sensors = self.options.get("binary_sensors", {})
-            configured_lights = self.options.get("lights", {})
-            for dev_id, info in data.recent_unknown_devices:
-                if (
-                    dev_id not in configured_switches
-                    and dev_id not in configured_sensors
-                    and dev_id not in configured_binary_sensors
-                    and dev_id not in configured_lights
-                ):
-                    has_devices = True
-                    devices_dict[dev_id] = dev_id
-
-        if not has_devices:
-            errors["base"] = "no_devices_found"
-
-        return self.async_show_form(
-            step_id="add_learned",
             data_schema=vol.Schema(
                 {
-                    vol.Required("device_id", default="refresh"): vol.In(devices_dict),
-                    vol.Optional("name"): str,
-                }
-            ),
-            errors=errors,
-        )
-
-    async def async_step_select_type(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.ConfigFlowResult:
-        """Select the type of device for the discovered switch command."""
-        if user_input is not None:
-            dev_type = user_input.get("device_type")
-            if dev_type == "Switch":
-                self.options["switches"][self._temp_device_id] = self._temp_name
-                return self.async_create_entry(title="", data=self.options)
-            elif dev_type == "Binary Sensor":
-                return await self.async_step_binary_sensor_options()
-            elif dev_type == "Light":
-                return await self.async_step_light_options()
-
-        return self.async_show_form(
-            step_id="select_type",
-            data_schema=vol.Schema(
-                {
-                    vol.Required("device_type", default="Switch"): vol.In(
-                        ["Switch", "Binary Sensor", "Light"]
+                    vol.Required(
+                        CONF_AUTOMATIC_ADD,
+                        default=options.get(CONF_AUTOMATIC_ADD, DEFAULT_AUTOMATIC_ADD),
+                    ): BooleanSelector(),
+                    vol.Required(
+                        CONF_SIGNAL_REPETITIONS,
+                        default=options.get(
+                            CONF_SIGNAL_REPETITIONS, DEFAULT_SIGNAL_REPETITIONS
+                        ),
+                    ): NumberSelector(
+                        NumberSelectorConfig(min=1, max=10, mode=NumberSelectorMode.BOX)
+                    ),
+                    vol.Required(
+                        CONF_KEEPALIVE,
+                        default=options.get(CONF_KEEPALIVE, KEEPALIVE_INTERVAL),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=10,
+                            max=3600,
+                            mode=NumberSelectorMode.BOX,
+                            unit_of_measurement="s",
+                        )
                     ),
                 }
             ),
         )
 
-    async def async_step_add_manual(
+
+class RFLinkSubentryFlow(ConfigSubentryFlow):
+    """Shared behaviour for adding and editing RFLink devices."""
+
+    #: Which discovery bucket to offer as suggestions.
+    discovery_type = "switch"
+
+    async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.ConfigFlowResult:
-        """Add a device manually."""
+    ) -> SubentryFlowResult:
+        """Add a new device."""
         if user_input is not None:
-            dev_id = user_input["device_id"]
-            name = user_input["name"]
-            dev_type = user_input["device_type"]
-
-            if dev_type == "Switch":
-                self.options["switches"][dev_id] = name
-                return self.async_create_entry(title="", data=self.options)
-            elif dev_type == "Binary Sensor":
-                self._temp_device_id = dev_id
-                self._temp_name = name
-                return await self.async_step_binary_sensor_options()
-            elif dev_type == "Light":
-                self._temp_device_id = dev_id
-                self._temp_name = name
-                return await self.async_step_light_options()
-            else:
-                self.options["sensors"][dev_id] = name
-                return self.async_create_entry(title="", data=self.options)
-
-        return self.async_show_form(
-            step_id="add_manual",
-            data_schema=vol.Schema(
-                {
-                    vol.Required("device_type", default="Switch"): vol.In(
-                        ["Switch", "Sensor", "Binary Sensor", "Light"]
-                    ),
-                    vol.Required("device_id"): str,
-                    vol.Required("name"): str,
-                }
-            ),
-        )
-
-    async def async_step_binary_sensor_options(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.ConfigFlowResult:
-        """Configure binary sensor specific options."""
-        if user_input is not None:
-            device_class = user_input.get("device_class")
-            off_delay = user_input.get("off_delay")
-
-            # Save to options dict
-            self.options["binary_sensors"][self._temp_device_id] = {
-                "name": self._temp_name,
-                "device_class": device_class if device_class != "none" else None,
-                "off_delay": off_delay if off_delay else None,
-            }
-            return self.async_create_entry(title="", data=self.options)
-
-        # List of binary sensor device classes supported by Home Assistant
-        try:
-            from homeassistant.components.binary_sensor import BinarySensorDeviceClass
-
-            device_classes = ["none"] + [c.value for c in BinarySensorDeviceClass]
-        except ImportError:
-            device_classes = [
-                "none",
-                "battery",
-                "co",
-                "cold",
-                "connectivity",
-                "door",
-                "garage_door",
-                "gas",
-                "heat",
-                "light",
-                "lock",
-                "moisture",
-                "motion",
-                "moving",
-                "occupancy",
-                "opening",
-                "plug",
-                "power",
-                "presence",
-                "problem",
-                "running",
-                "safety",
-                "smoke",
-                "sound",
-                "tamper",
-                "update",
-                "vibration",
-                "window",
-            ]
-
-        return self.async_show_form(
-            step_id="binary_sensor_options",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional("device_class", default="none"): vol.In(
-                        device_classes
-                    ),
-                    vol.Optional("off_delay"): vol.All(
-                        vol.Coerce(int), vol.Range(min=1)
-                    ),
-                }
-            ),
-        )
-
-    async def async_step_light_options(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.ConfigFlowResult:
-        """Configure light specific options."""
-        if user_input is not None:
-            light_type = user_input.get("type")
-
-            # Save to options dict
-            self.options["lights"][self._temp_device_id] = {
-                "name": self._temp_name,
-                "type": light_type,
-            }
-            return self.async_create_entry(title="", data=self.options)
-
-        return self.async_show_form(
-            step_id="light_options",
-            data_schema=vol.Schema(
-                {
-                    vol.Required("type", default="dimmable"): vol.In(
-                        ["dimmable", "hybrid", "switchable", "toggle"]
-                    ),
-                }
-            ),
-        )
-
-    async def async_step_modify(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.ConfigFlowResult:
-        """Modify a device ID."""
-        configured_switches = self.options.get("switches", {})
-        configured_sensors = self.options.get("sensors", {})
-        configured_binary_sensors = self.options.get("binary_sensors", {})
-        configured_lights = self.options.get("lights", {})
-
-        all_devices = {}
-        for dev_id, name in configured_switches.items():
-            all_devices[f"[Switch] {dev_id}"] = f"{name} ({dev_id})"
-        for dev_id, config in configured_binary_sensors.items():
-            name = config.get("name") if isinstance(config, dict) else config
-            all_devices[f"[Binary Sensor] {dev_id}"] = f"{name} ({dev_id})"
-        for dev_id, config in configured_lights.items():
-            name = config.get("name") if isinstance(config, dict) else config
-            all_devices[f"[Light] {dev_id}"] = f"{name} ({dev_id})"
-        for dev_id, name in configured_sensors.items():
-            all_devices[f"[Sensor] {dev_id}"] = f"{name} ({dev_id})"
-
-        if not all_devices:
-            return self.async_abort(reason="no_configured_devices")
-
-        errors = {}
-
-        if user_input is not None:
-            selection = user_input["device_id"]
-            new_dev_id = user_input["new_device_id"]
-
-            from homeassistant.helpers import (
-                device_registry as dr,
-                entity_registry as er,
+            data = self._data_from_input(user_input)
+            return self.async_create_entry(
+                title=user_input[CONF_NAME],
+                data=data,
+                unique_id=data[CONF_DEVICE_ID],
             )
 
-            dev_reg = dr.async_get(self.hass)
-            ent_reg = er.async_get(self.hass)
+        return self.async_show_form(step_id="user", data_schema=self._schema({}))
 
-            device_type = None
-            if selection.startswith("[Switch] "):
-                old_dev_id = selection.replace("[Switch] ", "")
-                name = self.options["switches"].pop(old_dev_id, None)
-                if name:
-                    self.options["switches"][new_dev_id] = name
-                    device_type = "switch"
-            elif selection.startswith("[Binary Sensor] "):
-                old_dev_id = selection.replace("[Binary Sensor] ", "")
-                config = self.options["binary_sensors"].pop(old_dev_id, None)
-                if config:
-                    self.options["binary_sensors"][new_dev_id] = config
-                    device_type = "binary_sensor"
-            elif selection.startswith("[Light] "):
-                old_dev_id = selection.replace("[Light] ", "")
-                config = self.options["lights"].pop(old_dev_id, None)
-                if config:
-                    self.options["lights"][new_dev_id] = config
-                    device_type = "light"
-            elif selection.startswith("[Sensor] "):
-                old_dev_id = selection.replace("[Sensor] ", "")
-                name = self.options["sensors"].pop(old_dev_id, None)
-                if name:
-                    self.options["sensors"][new_dev_id] = name
-                    device_type = "sensor"
-
-            if device_type:
-                # update device registry
-                dev_entry = dev_reg.async_get_device(identifiers={(DOMAIN, old_dev_id)})
-                if dev_entry:
-                    dev_reg.async_update_device(
-                        dev_entry.id, new_identifiers={(DOMAIN, new_dev_id)}
-                    )
-
-                # update entity registry
-                if device_type == "switch":
-                    old_unique_id = f"rflink_switch_{old_dev_id}"
-                    new_unique_id = f"rflink_switch_{new_dev_id}"
-                    ent_entry = ent_reg.async_get_entity_id(
-                        "switch", DOMAIN, old_unique_id
-                    )
-                    if ent_entry:
-                        ent_reg.async_update_entity(
-                            ent_entry, new_unique_id=new_unique_id
-                        )
-                elif device_type == "binary_sensor":
-                    old_unique_id = f"rflink_binary_sensor_{old_dev_id}"
-                    new_unique_id = f"rflink_binary_sensor_{new_dev_id}"
-                    ent_entry = ent_reg.async_get_entity_id(
-                        "binary_sensor", DOMAIN, old_unique_id
-                    )
-                    if ent_entry:
-                        ent_reg.async_update_entity(
-                            ent_entry, new_unique_id=new_unique_id
-                        )
-                elif device_type == "light":
-                    old_unique_id = f"rflink_light_{old_dev_id}"
-                    new_unique_id = f"rflink_light_{new_dev_id}"
-                    ent_entry = ent_reg.async_get_entity_id(
-                        "light", DOMAIN, old_unique_id
-                    )
-                    if ent_entry:
-                        ent_reg.async_update_entity(
-                            ent_entry, new_unique_id=new_unique_id
-                        )
-                else:
-                    # For sensors: temperature, humidity, battery, total_rain
-                    for s_type in ["temperature", "humidity", "battery", "total_rain"]:
-                        old_unique_id = f"rflink_sensor_{s_type}_{old_dev_id}"
-                        new_unique_id = f"rflink_sensor_{s_type}_{new_dev_id}"
-                        ent_entry = ent_reg.async_get_entity_id(
-                            "sensor", DOMAIN, old_unique_id
-                        )
-                        if ent_entry:
-                            ent_reg.async_update_entity(
-                                ent_entry, new_unique_id=new_unique_id
-                            )
-
-            return self.async_create_entry(title="", data=self.options)
-
-        return self.async_show_form(
-            step_id="modify",
-            data_schema=vol.Schema(
-                {
-                    vol.Required("device_id"): vol.In(all_devices),
-                    vol.Required("new_device_id"): str,
-                }
-            ),
-            errors=errors,
-        )
-
-    async def async_step_remove(
+    async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.ConfigFlowResult:
-        """Remove a device."""
-        configured_switches = self.options.get("switches", {})
-        configured_sensors = self.options.get("sensors", {})
-        configured_binary_sensors = self.options.get("binary_sensors", {})
-        configured_lights = self.options.get("lights", {})
-
-        all_devices = {}
-        for dev_id, name in configured_switches.items():
-            all_devices[f"[Switch] {dev_id}"] = f"{name} ({dev_id})"
-        for dev_id, config in configured_binary_sensors.items():
-            name = config.get("name") if isinstance(config, dict) else config
-            all_devices[f"[Binary Sensor] {dev_id}"] = f"{name} ({dev_id})"
-        for dev_id, config in configured_lights.items():
-            name = config.get("name") if isinstance(config, dict) else config
-            all_devices[f"[Light] {dev_id}"] = f"{name} ({dev_id})"
-        for dev_id, name in configured_sensors.items():
-            all_devices[f"[Sensor] {dev_id}"] = f"{name} ({dev_id})"
-
-        if not all_devices:
-            return self.async_abort(reason="no_configured_devices")
+    ) -> SubentryFlowResult:
+        """Edit an existing device."""
+        subentry = self._get_reconfigure_subentry()
 
         if user_input is not None:
-            selection = user_input["device_id"]
-            if selection.startswith("[Switch] "):
-                dev_id = selection.replace("[Switch] ", "")
-                self.options["switches"].pop(dev_id, None)
-            elif selection.startswith("[Binary Sensor] "):
-                dev_id = selection.replace("[Binary Sensor] ", "")
-                self.options["binary_sensors"].pop(dev_id, None)
-            elif selection.startswith("[Light] "):
-                dev_id = selection.replace("[Light] ", "")
-                self.options["lights"].pop(dev_id, None)
-            elif selection.startswith("[Sensor] "):
-                dev_id = selection.replace("[Sensor] ", "")
-                self.options["sensors"].pop(dev_id, None)
+            data = self._data_from_input(user_input)
+            return self.async_update_and_abort(
+                self._get_entry(),
+                subentry,
+                title=user_input[CONF_NAME],
+                data=data,
+                unique_id=data[CONF_DEVICE_ID],
+            )
 
-            return self.async_create_entry(title="", data=self.options)
-
+        defaults = {**subentry.data, CONF_NAME: subentry.title}
         return self.async_show_form(
-            step_id="remove",
-            data_schema=vol.Schema(
-                {
-                    vol.Required("device_id"): vol.In(all_devices),
-                }
-            ),
+            step_id="reconfigure", data_schema=self._schema(defaults)
         )
+
+    @callback
+    def _data_from_input(self, user_input: dict[str, Any]) -> dict[str, Any]:
+        """Convert form input into subentry data."""
+        data = {
+            CONF_DEVICE_ID: user_input[CONF_DEVICE_ID].strip(),
+            CONF_ALIASES: [alias.strip() for alias in user_input.get(CONF_ALIASES, [])],
+        }
+        data.update(self._extra_data(user_input))
+        return data
+
+    @callback
+    def _extra_data(self, user_input: dict[str, Any]) -> dict[str, Any]:
+        """Return the platform specific part of the subentry data."""
+        return {}
+
+    @callback
+    def _schema(self, defaults: dict[str, Any]) -> vol.Schema:
+        """Build the form schema."""
+        device_options = self._device_options()
+        schema: dict[Any, Any] = {
+            vol.Required(
+                CONF_DEVICE_ID, default=defaults.get(CONF_DEVICE_ID, vol.UNDEFINED)
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=device_options,
+                    custom_value=True,
+                    mode=SelectSelectorMode.DROPDOWN,
+                    sort=True,
+                )
+            ),
+            vol.Required(
+                CONF_NAME, default=defaults.get(CONF_NAME, vol.UNDEFINED)
+            ): TextSelector(),
+        }
+        schema.update(self._extra_schema(defaults))
+        schema[vol.Optional(CONF_ALIASES, default=defaults.get(CONF_ALIASES, []))] = (
+            SelectSelector(
+                SelectSelectorConfig(
+                    options=device_options,
+                    custom_value=True,
+                    multiple=True,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            )
+        )
+        return vol.Schema(schema)
+
+    @callback
+    def _extra_schema(self, defaults: dict[str, Any]) -> dict[Any, Any]:
+        """Return the platform specific part of the form schema."""
+        return {}
+
+    @callback
+    def _device_options(self) -> list[SelectOptionDict]:
+        """Return recently seen devices that match this platform."""
+        entry = self._get_entry()
+        gateway = getattr(entry, "runtime_data", None)
+        if gateway is None:
+            return []
+
+        return [
+            SelectOptionDict(
+                value=device.device_id,
+                label=f"{device.device_id} ({', '.join(sorted(device.fields))})",
+            )
+            for device in gateway.discovered.values()
+            if device.device_type == self.discovery_type
+        ]
+
+
+class SwitchSubentryFlow(RFLinkSubentryFlow):
+    """Add or edit a switch."""
+
+
+class LightSubentryFlow(RFLinkSubentryFlow):
+    """Add or edit a light."""
+
+    @callback
+    def _extra_schema(self, defaults: dict[str, Any]) -> dict[Any, Any]:
+        return {
+            vol.Required(
+                CONF_LIGHT_TYPE,
+                default=defaults.get(CONF_LIGHT_TYPE, LIGHT_TYPE_DIMMABLE),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=list(LIGHT_TYPES),
+                    mode=SelectSelectorMode.DROPDOWN,
+                    translation_key="light_type",
+                )
+            )
+        }
+
+    @callback
+    def _extra_data(self, user_input: dict[str, Any]) -> dict[str, Any]:
+        return {CONF_LIGHT_TYPE: user_input[CONF_LIGHT_TYPE]}
+
+
+class CoverSubentryFlow(RFLinkSubentryFlow):
+    """Add or edit a cover."""
+
+    @callback
+    def _extra_schema(self, defaults: dict[str, Any]) -> dict[Any, Any]:
+        return {
+            vol.Required(
+                CONF_INVERTED, default=defaults.get(CONF_INVERTED, False)
+            ): BooleanSelector()
+        }
+
+    @callback
+    def _extra_data(self, user_input: dict[str, Any]) -> dict[str, Any]:
+        return {CONF_INVERTED: user_input[CONF_INVERTED]}
+
+
+class BinarySensorSubentryFlow(RFLinkSubentryFlow):
+    """Add or edit a binary sensor."""
+
+    @callback
+    def _extra_schema(self, defaults: dict[str, Any]) -> dict[Any, Any]:
+        return {
+            vol.Optional(
+                CONF_DEVICE_CLASS,
+                description={"suggested_value": defaults.get(CONF_DEVICE_CLASS)},
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=sorted(
+                        device_class.value for device_class in BinarySensorDeviceClass
+                    ),
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_OFF_DELAY,
+                description={"suggested_value": defaults.get(CONF_OFF_DELAY)},
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=1,
+                    max=3600,
+                    mode=NumberSelectorMode.BOX,
+                    unit_of_measurement="s",
+                )
+            ),
+        }
+
+    @callback
+    def _extra_data(self, user_input: dict[str, Any]) -> dict[str, Any]:
+        off_delay = user_input.get(CONF_OFF_DELAY)
+        return {
+            CONF_DEVICE_CLASS: user_input.get(CONF_DEVICE_CLASS),
+            CONF_OFF_DELAY: int(off_delay) if off_delay else None,
+        }
+
+
+class SensorSubentryFlow(RFLinkSubentryFlow):
+    """Add or edit a sensor device."""
+
+    discovery_type = "sensor"
+
+    @callback
+    def _extra_schema(self, defaults: dict[str, Any]) -> dict[Any, Any]:
+        return {
+            vol.Required(
+                CONF_FORCE_UPDATE, default=defaults.get(CONF_FORCE_UPDATE, False)
+            ): BooleanSelector()
+        }
+
+    @callback
+    def _extra_data(self, user_input: dict[str, Any]) -> dict[str, Any]:
+        return {CONF_FORCE_UPDATE: user_input[CONF_FORCE_UPDATE]}

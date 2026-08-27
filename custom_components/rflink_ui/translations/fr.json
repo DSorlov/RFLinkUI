@@ -1,90 +1,340 @@
 {
+  "entity": {
+    "binary_sensor": {
+      "connection": { "name": "État de la connexion" },
+      "motion": { "name": "Mouvement" },
+      "smoke": { "name": "Fumée" }
+    },
+    "radio_frequency": {
+      "transmitter": { "name": "Émetteur" }
+    },
+    "sensor": {
+      "average_windspeed": { "name": "Vitesse moyenne du vent" },
+      "barometric_pressure": { "name": "Pression atmosphérique" },
+      "battery": {
+        "name": "État de la batterie",
+        "state": { "ok": "OK", "low": "Faible", "unknown": "Inconnu" }
+      },
+      "co2_air_quality": { "name": "CO2" },
+      "current_phase_1": { "name": "Courant phase 1" },
+      "current_phase_2": { "name": "Courant phase 2" },
+      "current_phase_3": { "name": "Courant phase 3" },
+      "distance": { "name": "Distance" },
+      "doorbell_melody": { "name": "Mélodie de sonnette" },
+      "humidity": { "name": "Humidité" },
+      "humidity_status": {
+        "name": "État d'humidité",
+        "state": {
+          "normal": "Normal",
+          "comfortable": "Confortable",
+          "dry": "Sec",
+          "wet": "Humide",
+          "unknown": "Inconnu"
+        }
+      },
+      "kilowatt": { "name": "Puissance" },
+      "last_seen": { "name": "Vu pour la dernière fois" },
+      "light_intensity": { "name": "Luminosité" },
+      "meter_value": { "name": "Index du compteur" },
+      "noise_level": { "name": "Niveau sonore" },
+      "rain_rate": { "name": "Intensité de pluie" },
+      "temperature": { "name": "Température" },
+      "total_rain": { "name": "Pluie totale" },
+      "uv_intensity": { "name": "Indice UV" },
+      "voltage": { "name": "Tension" },
+      "watt": { "name": "Puissance" },
+      "weather_forecast": {
+        "name": "Prévisions météo",
+        "state": {
+          "no_info": "Aucune information",
+          "sunny": "Ensoleillé",
+          "partly_cloudy": "Partiellement nuageux",
+          "cloudy": "Nuageux",
+          "rain": "Pluie",
+          "unknown": "Inconnu"
+        }
+      },
+      "windchill": { "name": "Refroidissement éolien" },
+      "winddirection": { "name": "Direction du vent" },
+      "windgusts": { "name": "Rafales de vent" },
+      "windspeed": { "name": "Vitesse du vent" },
+      "windtemp": { "name": "Température de l'anémomètre" }
+    }
+  },
   "config": {
+    "flow_title": "{name}",
     "step": {
       "user": {
-        "title": "RFLink",
-        "description": "Sélectionnez le port série de votre passerelle RFLink.",
-        "data": {
-          "port": "Port"
+        "title": "Connectez votre passerelle RFLink",
+        "description": "Sélectionnez le port série auquel votre passerelle RFLink est connectée. Un chemin `/dev/serial/by-id/…` est recommandé, car il survit à un redémarrage même si le numéro de périphérique change.",
+        "data": { "port": "Port" },
+        "data_description": {
+          "port": "Choisissez un port détecté, ou « Saisie manuelle » pour une passerelle réseau."
         }
       },
       "manual_port": {
-        "title": "Saisie manuelle du port",
-        "description": "Saisissez le chemin série (ex : /dev/serial/by-id/...) ou le socket ser2net (ex : socket://192.168.1.50:2001)",
-        "data": {
-          "port": "Port"
-        }
+        "title": "Saisir le port manuellement",
+        "description": "Saisissez un chemin série tel que `/dev/serial/by-id/usb-1a86_USB2.0-Serial-if00-port0`, ou une URL réseau telle que `socket://192.168.1.50:2001` (ser2net) ou `rfc2217://192.168.1.50:2001`.",
+        "data": { "port": "Port" }
+      },
+      "usb_confirm": {
+        "title": "Passerelle RFLink détectée",
+        "description": "Voulez-vous configurer la passerelle RFLink trouvée sur {port} ?"
+      },
+      "reconfigure": {
+        "title": "Changer le port série",
+        "data": { "port": "Port" }
       }
     },
     "error": {
-      "cannot_connect": "Impossible de se connecter au port série."
+      "cannot_connect": "Impossible d'ouvrir ce port. Vérifiez que la passerelle est branchée et qu'elle n'est pas utilisée par une autre intégration."
+    },
+    "abort": {
+      "already_configured": "Cette passerelle est déjà configurée.",
+      "reconfigure_successful": "Reconfiguration réussie.",
+      "wrong_port": "Ce port appartient à une autre passerelle."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Gérer les appareils RFLink",
-        "menu_options": {
-          "add_learned": "Ajouter un appareil détecté",
-          "add_manual": "Ajouter un appareil manuellement",
-          "modify": "Modifier l'ID d'un appareil",
-          "remove": "Supprimer un appareil"
+        "title": "Paramètres de la passerelle",
+        "data": {
+          "automatic_add": "Ajouter automatiquement les nouveaux appareils",
+          "signal_repetitions": "Répétitions des commandes",
+          "keepalive": "Intervalle de keep-alive"
+        },
+        "data_description": {
+          "automatic_add": "Crée un appareil dès qu'un signal 433 MHz inconnu est reçu. Désactivez cette option une fois vos appareils trouvés.",
+          "signal_repetitions": "Nombre d'envois de chaque commande sortante. Augmentez cette valeur pour les appareils qui ratent des commandes.",
+          "keepalive": "Fréquence d'envoi d'un PING pour détecter une connexion morte."
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "switch": {
+      "entry_type": "Interrupteur",
+      "initiate_flow": {
+        "user": "Ajouter un interrupteur",
+        "reconfigure": "Reconfigurer l'interrupteur"
+      },
+      "step": {
+        "user": {
+          "title": "Ajouter un interrupteur",
+          "description": "Appuyez d'abord sur un bouton de votre télécommande, puis choisissez l'appareil ci-dessous. Vous pouvez aussi saisir un identifiant manuellement, par exemple `NewKaku_008cbc9b_1`.",
+          "data": {
+            "device_id": "Identifiant RFLink",
+            "name": "Nom",
+            "aliases": "Identifiants supplémentaires"
+          },
+          "data_description": {
+            "aliases": "Identifiants supplémentaires qui pilotent le même appareil, pour les protocoles que RFLink décode parfois différemment."
+          }
+        },
+        "reconfigure": {
+          "title": "Reconfigurer l'interrupteur",
+          "data": {
+            "device_id": "Identifiant RFLink",
+            "name": "Nom",
+            "aliases": "Identifiants supplémentaires"
+          }
         }
       },
-      "add_learned": {
-        "title": "Appareils récemment détectés",
-        "description": "Appuyez sur votre télécommande. Si rien n'apparaît, sélectionnez 'Actualiser' et validez.\n\nAttention: L'interface ne se met pas à jour toute seule, vous devez cliquer sur 'Actualiser'.",
-        "data": {
-          "device_id": "Sélectionnez l'appareil (ou une action)",
-          "name": "Nom de l'appareil (ex: Température Extérieure)"
+      "abort": { "reconfigure_successful": "Reconfiguration réussie." }
+    },
+    "light": {
+      "entry_type": "Lumière",
+      "initiate_flow": {
+        "user": "Ajouter une lumière",
+        "reconfigure": "Reconfigurer la lumière"
+      },
+      "step": {
+        "user": {
+          "title": "Ajouter une lumière",
+          "description": "Appuyez d'abord sur un bouton de votre télécommande, puis choisissez l'appareil ci-dessous.",
+          "data": {
+            "device_id": "Identifiant RFLink",
+            "name": "Nom",
+            "light_type": "Type de commande",
+            "aliases": "Identifiants supplémentaires"
+          },
+          "data_description": {
+            "light_type": "Mode d'envoi : variable envoie des niveaux, hybride envoie un niveau puis ON, commutable envoie seulement ON/OFF, bascule envoie ON pour inverser l'état.",
+            "aliases": "Identifiants supplémentaires qui pilotent le même appareil."
+          }
+        },
+        "reconfigure": {
+          "title": "Reconfigurer la lumière",
+          "data": {
+            "device_id": "Identifiant RFLink",
+            "name": "Nom",
+            "light_type": "Type de commande",
+            "aliases": "Identifiants supplémentaires"
+          }
         }
       },
-      "add_manual": {
-        "title": "Ajouter manuellement",
-        "data": {
-          "device_type": "Type d'appareil",
-          "device_id": "Identifiant RFLink (ex: Unitec_1a4a_4)",
-          "name": "Nom de l'appareil"
+      "abort": { "reconfigure_successful": "Reconfiguration réussie." }
+    },
+    "cover": {
+      "entry_type": "Volet",
+      "initiate_flow": {
+        "user": "Ajouter un volet",
+        "reconfigure": "Reconfigurer le volet"
+      },
+      "step": {
+        "user": {
+          "title": "Ajouter un volet",
+          "description": "Volets roulants et stores. Appuyez d'abord sur un bouton de votre télécommande, puis choisissez l'appareil ci-dessous.",
+          "data": {
+            "device_id": "Identifiant RFLink",
+            "name": "Nom",
+            "inverted": "Inverser ouverture et fermeture",
+            "aliases": "Identifiants supplémentaires"
+          },
+          "data_description": {
+            "inverted": "Activez cette option pour les protocoles où UP et DOWN sont inversés, comme certains moteurs KlikAanKlikUit."
+          }
+        },
+        "reconfigure": {
+          "title": "Reconfigurer le volet",
+          "data": {
+            "device_id": "Identifiant RFLink",
+            "name": "Nom",
+            "inverted": "Inverser ouverture et fermeture",
+            "aliases": "Identifiants supplémentaires"
+          }
         }
       },
-      "modify": {
-        "title": "Modifier l'ID d'un appareil",
-        "data": {
-          "device_id": "Appareil à modifier",
-          "new_device_id": "Nouvel identifiant RFLink (ex: Unitec_1a4a_4)"
+      "abort": { "reconfigure_successful": "Reconfiguration réussie." }
+    },
+    "binary_sensor": {
+      "entry_type": "Capteur binaire",
+      "initiate_flow": {
+        "user": "Ajouter un capteur binaire",
+        "reconfigure": "Reconfigurer le capteur binaire"
+      },
+      "step": {
+        "user": {
+          "title": "Ajouter un capteur binaire",
+          "description": "Détecteurs de mouvement, contacts de porte et fenêtre, détecteurs de fumée et sonnettes.",
+          "data": {
+            "device_id": "Identifiant RFLink",
+            "name": "Nom",
+            "device_class": "Classe d'appareil",
+            "off_delay": "Délai d'extinction",
+            "aliases": "Identifiants supplémentaires"
+          },
+          "data_description": {
+            "off_delay": "Éteint le capteur automatiquement après ce nombre de secondes. À utiliser pour les appareils qui n'envoient qu'un déclenchement, comme les capteurs PIR."
+          }
+        },
+        "reconfigure": {
+          "title": "Reconfigurer le capteur binaire",
+          "data": {
+            "device_id": "Identifiant RFLink",
+            "name": "Nom",
+            "device_class": "Classe d'appareil",
+            "off_delay": "Délai d'extinction",
+            "aliases": "Identifiants supplémentaires"
+          }
         }
       },
-      "remove": {
-        "title": "Supprimer un appareil",
-        "data": {
-          "device_id": "Appareil"
+      "abort": { "reconfigure_successful": "Reconfiguration réussie." }
+    },
+    "sensor": {
+      "entry_type": "Capteur",
+      "initiate_flow": {
+        "user": "Ajouter un capteur",
+        "reconfigure": "Reconfigurer le capteur"
+      },
+      "step": {
+        "user": {
+          "title": "Ajouter un capteur",
+          "description": "Stations météo, thermomètres, pluviomètres et compteurs d'énergie. Chaque mesure rapportée devient sa propre entité.",
+          "data": {
+            "device_id": "Identifiant RFLink",
+            "name": "Nom",
+            "force_update": "Mettre à jour à chaque relevé",
+            "aliases": "Identifiants supplémentaires"
+          },
+          "data_description": {
+            "force_update": "Écrit un nouvel état même si la valeur n'a pas changé, afin que « dernière mise à jour » reflète toujours le dernier relevé. Cela augmente l'utilisation de la base de données.",
+            "aliases": "Identifiants supplémentaires pour le même capteur physique, pour les protocoles que RFLink décode parfois sous une autre marque."
+          }
+        },
+        "reconfigure": {
+          "title": "Reconfigurer le capteur",
+          "data": {
+            "device_id": "Identifiant RFLink",
+            "name": "Nom",
+            "force_update": "Mettre à jour à chaque relevé",
+            "aliases": "Identifiants supplémentaires"
+          }
         }
       },
-      "light_options": {
-        "title": "Options de la lumière",
-        "data": {
-          "type": "Type de lumière (dimmable, hybrid, switchable, ou toggle)"
-        }
-      },
-      "binary_sensor_options": {
-        "title": "Options du capteur binaire",
-        "data": {
-          "device_class": "Classe de l'appareil",
-          "off_delay": "Délai d'extinction (secondes)"
-        }
-      },
-      "select_type": {
-        "title": "Sélectionner le type d'appareil",
-        "description": "Choisissez comment Home Assistant doit représenter cet appareil.",
-        "data": {
-          "device_type": "Type d'appareil"
+      "abort": { "reconfigure_successful": "Reconfiguration réussie." }
+    }
+  },
+  "selector": {
+    "light_type": {
+      "options": {
+        "dimmable": "Variable",
+        "hybrid": "Hybride (niveau, puis ON)",
+        "switchable": "Commutable (ON/OFF seulement)",
+        "toggle": "Bascule"
+      }
+    }
+  },
+  "services": {
+    "send_command": {
+      "name": "Envoyer une commande RF",
+      "description": "Envoie une commande de protocole via la passerelle RFLink.",
+      "fields": {
+        "protocol": {
+          "name": "Protocole",
+          "description": "Le nom du protocole RFLink, par exemple Kaku, NewKaku ou Unitec."
+        },
+        "command": {
+          "name": "Commande",
+          "description": "Le reste du paquet, par exemple 1a4a;4;ON."
         }
       }
     },
-    "error": {
-      "no_devices_found": "Aucun signal RFLink inconnu récent n'a été détecté. Appuyez sur votre télécommande et réessayez.",
-      "no_configured_devices": "Aucun appareil n'est configuré.",
-      "cannot_connect": "Impossible de se connecter au port série"
+    "send_raw": {
+      "name": "Envoyer un paquet brut",
+      "description": "Envoie un paquet RFLink complet sans traitement. Utile pour les commandes de passerelle comme GPIOset.",
+      "fields": {
+        "packet": {
+          "name": "Paquet",
+          "description": "Le paquet complet, par exemple 10;GPIOset;32;0;ON;."
+        }
+      }
+    },
+    "simulate_packet": {
+      "name": "Simuler un paquet",
+      "description": "Injecte un paquet dans l'intégration comme s'il avait été reçu, pour les tests et pour découvrir des appareils sans matériel.",
+      "fields": {
+        "packet": {
+          "name": "Paquet",
+          "description": "Le paquet RFLink brut, par exemple 20;01;Kaku;ID=1234abcd;SWITCH=1;CMD=ON;."
+        },
+        "config_entry_id": {
+          "name": "Passerelle",
+          "description": "Quelle passerelle doit recevoir le paquet. Toutes par défaut."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "send_failed": {
+      "message": "Impossible d'envoyer la commande à la passerelle RFLink : {error}"
+    },
+    "raw_timings_unsupported": {
+      "message": "Les passerelles RFLink ne peuvent pas émettre de séquences temporelles brutes. Utilisez plutôt l'action « Envoyer une commande RF » ou « Envoyer un paquet brut »."
+    },
+    "no_loaded_gateway": {
+      "message": "Aucune passerelle RFLink chargée ne peut recevoir ce paquet."
     }
   }
 }

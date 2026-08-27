@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest an improvement or support for a new device
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation you run into today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would you like to see?
+    validations:
+      required: true
+
+  - type: textarea
+    id: packets
+    attributes:
+      label: RFLink packets
+      description: >
+        If this is about a device or protocol, paste the raw packets from the
+        debug log, for example `20;3A;Oregon TempHygro;ID=0A4C;TEMP=00ba;HUM=40;`.
+      render: text
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered

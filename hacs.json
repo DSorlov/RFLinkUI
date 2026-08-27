@@ -1,4 +1,6 @@
 {
-  "name": "Home Assistant RFLink UI",
-  "homeassistant": "2026.5.4"
+  "name": "RFLink UI",
+  "homeassistant": "2026.5.4",
+  "hacs": "2.0.0",
+  "render_readme": true
 }

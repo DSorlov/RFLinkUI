@@ -1,129 +1,90 @@
 """Switch platform for RFLink UI."""
 
+from __future__ import annotations
+
 from typing import Any
-import logging
 
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigSubentry
 from homeassistant.const import STATE_ON
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from . import DOMAIN
-
-_LOGGER = logging.getLogger(__name__)
+from .const import COMMANDS_OFF, COMMANDS_ON, DOMAIN, SUBENTRY_TYPE_SWITCH
+from .entity import RFLinkEntity
+from .gateway import RFLinkConfigEntry, RFLinkGateway
+from .protocol import RFLinkPacket
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: RFLinkConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the RFLink switch platform."""
-    switches = entry.options.get("switches", {})
 
-    entities = []
-    for device_id, name in switches.items():
-        entities.append(RFLinkSwitch(entry.entry_id, device_id, name))
+    @callback
+    def _build(gateway: RFLinkGateway, subentry: ConfigSubentry) -> list[SwitchEntity]:
+        return [RFLinkSwitch(gateway, subentry)]
 
-    async_add_entities(entities)
+    entry.runtime_data.async_register_platform(
+        SUBENTRY_TYPE_SWITCH, async_add_entities, _build
+    )
 
 
-class RFLinkSwitch(SwitchEntity, RestoreEntity):
-    """Representation of an RFLink switch."""
+class RFLinkSwitch(RFLinkEntity, SwitchEntity, RestoreEntity):
+    """A switch controlled through the RFLink gateway."""
 
-    _attr_has_entity_name = True
-    _attr_should_poll = False
+    _attr_name = None
+    _attr_assumed_state = True
+    # Repeated identical remote presses must still trigger automations.
     _attr_force_update = True
 
-    def __init__(self, entry_id: str, device_id: str, name: str) -> None:
+    def __init__(self, gateway: RFLinkGateway, subentry: ConfigSubentry) -> None:
         """Initialize the switch."""
-        self._entry_id = entry_id
-        self._device_id = device_id
-        self._device_name = name
-        self._attr_name = None
-        self._attr_unique_id = f"rflink_switch_{device_id}"
+        super().__init__(gateway, subentry)
+        self._attr_unique_id = f"rflink_switch_{self._device_id}"
         self._attr_is_on = False
 
-        # device_id is expected to be protocol_id_switch, e.g., Unitec_1a4a_4
-        parts = device_id.split("_")
-        if len(parts) >= 3:
-            self._protocol = parts[0]
-            self._rflink_id = parts[1]
-            self._rflink_switch = parts[2]
-        else:
-            self._protocol = "Unknown"
-            self._rflink_id = "0"
-            self._rflink_switch = "0"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information about this RFLink device."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
-            name=self._device_name,
-            manufacturer="RFLink",
-            model=self._protocol,
-        )
-
     async def async_added_to_hass(self) -> None:
-        """Run when entity about to be added to hass."""
+        """Restore the previous state."""
         await super().async_added_to_hass()
-
         if (state := await self.async_get_last_state()) is not None:
             self._attr_is_on = state.state == STATE_ON
 
-        self.async_on_remove(
-            async_dispatcher_connect(
-                self.hass,
-                f"rflink_update_{self._device_id}",
-                self._handle_rflink_update,
-            )
-        )
-
     @callback
-    def _handle_rflink_update(self, data_dict: dict[str, str]) -> None:
-        """Handle updated data from RFLink."""
-        cmd = data_dict.get("CMD", "")
-        _LOGGER.debug("Switch %s received update: %s", self._device_id, cmd)
-
-        if cmd.upper() in ["ON", "ALLON"]:
+    def async_handle_packet(self, packet: RFLinkPacket) -> None:
+        """Update the state from a received command."""
+        command = packet.command
+        if command in COMMANDS_ON:
             self._attr_is_on = True
-        elif cmd.upper() in ["OFF", "ALLOFF"]:
+        elif command in COMMANDS_OFF:
             self._attr_is_on = False
+        else:
+            return
 
+        self._attr_available = True
         self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""
-        data = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
-        if not data:
-            return
-
-        # Standard syntax: 10;Protocol;ID;Switch;ON;\n
-        command = f"10;{self._protocol};{self._rflink_id};{self._rflink_switch};ON;\n"
-
-        try:
-            await data.async_send_command(command)
-            self._attr_is_on = True
-            self.async_write_ha_state()
-        except Exception:
-            pass
+        await self._async_command("ON", True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
-        data = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
-        if not data:
-            return
+        await self._async_command("OFF", False)
 
-        command = f"10;{self._protocol};{self._rflink_id};{self._rflink_switch};OFF;\n"
-
+    async def _async_command(self, command: str, is_on: bool) -> None:
         try:
-            await data.async_send_command(command)
-            self._attr_is_on = False
-            self.async_write_ha_state()
-        except Exception:
-            pass
+            await self.async_send_command(command)
+        except (ConnectionError, OSError) as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="send_failed",
+                translation_placeholders={"error": str(err)},
+            ) from err
+
+        self._attr_is_on = is_on
+        self.async_write_ha_state()

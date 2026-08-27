@@ -1,18 +1,23 @@
 {
   "domain": "rflink_ui",
   "name": "RFLink UI",
-  "codeowners": [
-    "@guanaco0403"
-  ],
+  "codeowners": ["@guanaco0403"],
   "config_flow": true,
-  "after_dependencies": [
-    "radio_frequency"
-  ],
+  "after_dependencies": ["radio_frequency"],
   "documentation": "https://github.com/guanaco0403/Home-Assistant-Rflink-UI",
+  "integration_type": "hub",
   "iot_class": "local_push",
-  "requirements": [
-    "pyserial-asyncio-fast>=0.11",
-    "pyserial>=3.5"
+  "issue_tracker": "https://github.com/guanaco0403/Home-Assistant-Rflink-UI/issues",
+  "loggers": ["serial_asyncio_fast"],
+  "quality_scale": "silver",
+  "requirements": ["pyserial-asyncio-fast>=0.16", "pyserial>=3.5"],
+  "usb": [
+    { "vid": "2341", "pid": "0042" },
+    { "vid": "2341", "pid": "0010" },
+    { "vid": "2A03", "pid": "0042" },
+    { "vid": "2A03", "pid": "0010" },
+    { "vid": "1A86", "pid": "7523", "description": "*rflink*" },
+    { "vid": "0403", "pid": "6001", "description": "*rflink*" }
   ],
-  "version": "1.2.2"
+  "version": "2.0.0"
 }

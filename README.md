@@ -1,118 +1,168 @@
-# 🏠 Home Assistant RFLink UI
+<img src="custom_components/rflink_ui/brand/logo.png" alt="RFLink UI" width="360">
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
+[![Quality scale](https://img.shields.io/badge/quality%20scale-silver-c0c0c0.svg)](https://developers.home-assistant.io/docs/core/integration-quality-scale/)
 
-## 🔌 Overview
-
-**Home-Assistant-RFLink-UI** is a modern, fully UI-driven custom [Home Assistant](https://www.home-assistant.io) integration for Arduino RFLink gateways. Unlike the legacy YAML-based RFLink integration, this component is configured entirely through the Home Assistant UI and supports dynamic discovery of devices.
-
-This integration uses the `serial_asyncio` library for fast, non-blocking communication and is designed to bring RFLink into the modern era of Home Assistant.
-
-
-<img width="1117" height="832" alt="image" src="https://github.com/user-attachments/assets/53aaba17-a0ba-4cde-85b3-9cf3529ce602" />
-
----
-## ✨ Features
-
-- 📡 **Connects to any standard Arduino RFLink gateway** via USB/Serial
-- 🔍 **Auto-Discovery Mode**: Discovers recently received signals, displays them as clean device IDs, and lets you choose their entity type (Switch, Binary Sensor, or Light) and configuration parameters right from the UI!
-- ✍️ **Manual Addition**: Add your switches and sensors manually if you already know their protocol and IDs
-- 🔄 **Async Serial Polling**: Non-blocking connection with automatic background reconnects and keep-alive pings
-- 📻 **Custom Commands**: Send any raw RF command using the rflink_ui.send_command service.
-- 🟢 **Connection Sensor**: Includes a binary sensor to monitor the gateway's connection status in real-time
-- 🧪 **Packet Simulation**: Built-in service (rflink_ui.simulate_packet) to inject mock RF packets for easy testing and debugging without physical hardware.
+**RFLink UI** is a fully UI driven [Home Assistant](https://www.home-assistant.io)
+integration for Arduino RFLink gateways. Unlike the legacy YAML based `rflink`
+integration, every device is added, renamed, reconfigured and removed straight
+from the Home Assistant interface.
 
 ---
 
-## 🏷 Supported Platforms & Entities
+## Highlights
 
-- **`sensor`** — Creates dedicated `Temperature` (in °C), `Humidity` (in %), and `Battery` status entities for numerical climate sensors (e.g., Oregon Scientific, Cresta). Extra fields like wind or pressure are stored as attributes on these entities.
-- **`switch`** — Creates control entities for writable RF outlets, relays, and lights (e.g., Kaku, Unitec, Chacon) so you can trigger them or sync their state with physical remotes.
-- **`light`** — Creates dimmer and switch-like light entities (e.g., KlikAanKlikUit dimmers, Nexa wall plugs, Livolo switches). Supports brightness dimming level control and offers four configurable light command styles to accommodate different hardware behaviors:
-  - **`dimmable`**: Sends direct numeric brightness levels (`0-15`).
-  - **`hybrid`**: Sends brightness levels followed by an `ON` command (ideal for devices like the Telldus/Nexa MYCR-250 that need an activation signal to wake up/apply the level).
-  - **`switchable`**: Sends only standard `ON` and `OFF` commands (acts like a binary light switch).
-  - **`toggle`**: Sends only an `ON` command to cycle/toggle the state.
-- **`binary_sensor`** — Covers status monitoring:
-  - **Gateway Connection**: A connectivity sensor tracking the serial port connection to the RFLink gateway.
-  - **RF Devices**: Any binary state sensor (e.g., PIR motion detectors, door/window opening contacts, smoke detectors, water leak sensors, doorbells). Fully supports configurable `device_class` and `off_delay` for trigger-only sensors.
-- **`radio_frequency`** *(New in Home Assistant 2026.5.0)* — Exposes the main gateway transmitter entity to allow broadcasting custom RF payloads using standard actions.
-
-## ⚠️ Warning
-- The entity unique ID is generated using the hardware's protocol and ID (e.g., `rflink_switch_Unitec_1a4a_4`).
-- If you remove a device from the integration's Options, the associated entity will be dynamically removed from Home Assistant.
-- This integration is built as a complete replacement for the legacy `rflink` component. **Do not run both simultaneously on the same serial port !!!**
+- **Zero YAML.** The gateway is added through a config flow, devices are added as
+  config subentries with their own *Add device* button on the integration card.
+- **Automatic discovery.** The gateway is discovered over USB, and with
+  *Automatically add new devices* enabled every 433 MHz signal that is picked up
+  becomes a device without a restart or a reload.
+- **A sensor is a sensor.** Every measurement in a packet becomes its own entity
+  with the right device class, unit and state class. Temperature, humidity,
+  pressure, wind speed, wind direction, gusts, rain, rain rate, UV, lux, CO2,
+  noise, power, current, voltage, distance and more.
+- **Aliases.** RFLink sometimes decodes the same physical sensor as a different
+  brand. Map several IDs onto one device instead of ending up with duplicates.
+- **Group commands.** `ALLON` and `ALLOFF` from a remote reach every button of
+  that address.
+- **Stable F007_TH identities.** Ambient Weather / Froggit sensors are addressed
+  by their channel, so a battery change no longer creates a new device.
+- **Local brand images.** Icons and logos ship with the integration, no
+  round trip through the brands repository.
 
 ---
 
-## 🧪 Requirements
+## Supported entities
 
-- **Home Assistant 2026.5.4 or newer**
-- Python 3.12+
-- pyserial-asyncio-fast>=0.11 (automatically installed)
+| Platform | What you get |
+| --- | --- |
+| `sensor` | One entity per measurement, plus a diagnostic **Last seen** timestamp and battery status. |
+| `binary_sensor` | Motion detectors, door and window contacts, smoke alarms, doorbells and leak sensors, with an optional off delay. Also a connectivity sensor for the gateway itself. |
+| `switch` | RF outlets, relays and wall switches. Repeated remote presses always fire a state change, so scene remotes work. |
+| `light` | Dimmers and light switches with four command styles (see below). |
+| `cover` | Roller shutters and blinds with open, close and stop, and an option for protocols where up and down are reversed. |
+| `radio_frequency` | The gateway transmitter, used as the target of the `send_command` and `send_raw` actions. |
 
-## 📦 Installation
+### Light command styles
 
-### Option 1: HACS (Recommended for Users)
+| Style | Behaviour |
+| --- | --- |
+| `dimmable` | Sends a numeric level `0-15`. |
+| `hybrid` | Sends the level, then `ON`. Needed by devices such as the Telldus/Nexa MYCR-250. |
+| `switchable` | Only sends `ON` and `OFF`. |
+| `toggle` | Sends `ON` to flip the state. |
+
+---
+
+## Requirements
+
+- Home Assistant **2026.5.4** or newer
+- Python 3.13 or newer
+- An Arduino based RFLink gateway on USB, or reachable over `ser2net`
+
+`pyserial-asyncio-fast` and `pyserial` are installed automatically.
+
+---
+
+## Installation
+
+### HACS (recommended)
+
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?repository=Home-Assistant-Rflink-UI&owner=guanaco0403&category=integration)
 
-1. Go to **HACS > Integrations > Custom repositories**
-2. Add this repo URL: `https://github.com/guanaco0403/Home-Assistant-Rflink-UI`
-3. Select category: **Integration**
-4. Click **Add**
-5. Install the `RFLink UI` integration
-6. Restart Home Assistant
+1. **HACS → Integrations → ⋮ → Custom repositories**
+2. Add `https://github.com/guanaco0403/Home-Assistant-Rflink-UI` as an **Integration**
+3. Install **RFLink UI** and restart Home Assistant
 
-### Option 2: Manual
+### Manual
 
-1. Download the latest release from GitHub
-2. Extract and copy the `rflink_ui` folder into: `/config/custom_components/`
+1. Download the latest release
+2. Copy the `rflink_ui` folder into `/config/custom_components/`
 3. Restart Home Assistant
 
 ---
 
-## ⚙️ Configuration
+## Setting up the gateway
 
-### Setup via Home Assistant UI
+If the gateway is plugged into USB, Home Assistant discovers it and offers it
+under **Settings → Devices & services**. Otherwise:
 
-1. Go to **Settings > Devices & Services > Add Integration**
-2. Search for **RFLink UI**
-3. Select your serial port from the dropdown (e.g., `/dev/ttyUSB0` or `COM3`) — it's recommended to use the `/dev/serial/by-id/...` path if available so device path changes after reboot don't disconnect your gateway.
-4. **Network / ser2net setup**: If connecting to a remote RFLink via `ser2net` or network socket, choose **Enter manually** and use the `socket://` scheme:
-   * **TCP Socket**: `socket://<IP_OR_HOSTNAME>:<PORT>` (e.g., `socket://192.168.1.50:2001`)
-   * **RFC 2217**: `rfc2217://<IP_OR_HOSTNAME>:<PORT>` (e.g., `rfc2217://192.168.1.50:2001`)
-5. Submit to connect!
+1. **Settings → Devices & services → Add integration → RFLink UI**
+2. Pick your serial port. Prefer a `/dev/serial/by-id/…` path, it survives a
+   reboot even when the device number changes.
+3. For a network gateway choose **Enter manually** and use a URL:
+   - ser2net / plain TCP: `socket://192.168.1.50:2001`
+   - RFC 2217: `rfc2217://192.168.1.50:2001`
 
-### Adding Devices (Options Flow)
+The port can be changed later with **⋮ → Reconfigure**.
 
-Once configured, click **Configure** on the integration card to:
-- **Add recently detected device**: View signals picked up in the last few minutes and quickly map them to an entity.
-- **Add device manually**: Manually type in the Protocol and ID.
-- **Remove device**: Delete an existing device from the integration.
+### Gateway options
+
+**⋮ → Configure** on the integration card:
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| Automatically add new devices | Off | Creates a device as soon as an unknown signal is received. Turn it on while pairing, then off again. |
+| Command repetitions | 1 | How many times each outgoing command is sent. Raise it for devices that miss commands. |
+| Keep-alive interval | 60 s | How often a `PING` is sent to detect a dead link. |
 
 ---
 
-## 🛠 Action: `rflink_ui.send_command`
+## Adding devices
 
-You can manually send any raw RF command through the gateway.
+Press **Add device** on the integration card and pick the type. The **RFLink ID**
+field is a combo box: recently received signals are listed with the fields they
+carry, and you can type an ID by hand such as `NewKaku_008cbc9b_1`.
 
-### Example:
+Every device also accepts **Additional IDs**. Use them when RFLink decodes the
+same hardware under more than one protocol, for example a sensor that is
+sometimes reported as `Xiron_4b02` and sometimes as `Tunex_4b02`.
+
+Devices are reconfigured and deleted from the same card, and renaming a device
+in Home Assistant no longer touches its RFLink ID.
+
+### Automatic discovery
+
+With **Automatically add new devices** enabled, any packet from an unknown
+device creates a device immediately: sensor packets become a sensor device,
+command packets become a switch. Change the type afterwards by deleting the
+device and adding it as a light, cover or binary sensor instead.
+
+---
+
+## Actions
+
+### `rflink_ui.send_command`
+
+Sends a protocol command through the gateway.
 
 ```yaml
 action: rflink_ui.send_command
 target:
-  entity_id: radio_frequency.rflink_com3_transmitter  # Replace with your actual transmitter entity ID (e.g. rflink_dev_ttyusb0_transmitter)
+  entity_id: radio_frequency.rflink_dev_ttyusb0_transmitter
 data:
-  protocol: "Unitec"
+  protocol: Unitec
   command: "1a4a;4;ON"
 ```
 
-## 🛠 Action: `rflink_ui.simulate_packet`
+### `rflink_ui.send_raw`
 
-You can simulate receiving a raw RFLink packet string in the integration. This is highly useful for testing or auto-discovering devices without physical hardware.
+Sends a complete packet without any processing. This is how you drive the
+gateway's own GPIO pins.
 
-### Example:
+```yaml
+action: rflink_ui.send_raw
+target:
+  entity_id: radio_frequency.rflink_dev_ttyusb0_transmitter
+data:
+  packet: "10;GPIOset;32;0;ON;"
+```
+
+### `rflink_ui.simulate_packet`
+
+Feeds a packet into the integration as if it had been received. Useful for
+testing automations, and for adding devices you do not have at hand.
 
 ```yaml
 action: rflink_ui.simulate_packet
@@ -120,82 +170,89 @@ data:
   packet: "20;01;Kaku;ID=1234abcd;SWITCH=1;CMD=ON;"
 ```
 
-## 📌 Integration Type & Quality
+---
 
-- Integration Type: hub
-- Quality Scale: bronze
-- IoT Class: local_push
+## Troubleshooting
 
-## 🧑‍💻 Code Owner
+**"Could not open that port"**
+Another integration or the legacy `rflink` integration is holding the port. Do
+not run both on the same gateway.
 
-- @guanaco0403
+**No devices show up in the picker**
+Press a button on the remote, then reopen the *Add device* dialog. Enable debug
+logging to confirm packets are arriving at all:
 
-## 🪪 License
-
-This project is licensed under the MIT License.
-
-## 📢 Contribute
-
-Pull requests are welcome! If you want to improve signal parsing, add support for more sensor types (like wind/rain), or enhance the config flow — contributions are greatly appreciated.
-
-## 🧪 Testing & Development
-
-This repository includes a dedicated test runner (`scripts/test_runner.py`) that automatically sets up an isolated virtual environment (`.venv_ha_test`), installs the specified Home Assistant version, and configures dependencies.
-
-### Running the Test Runner
-
-* **Run Automated Tests** (default action)
-  ```bash
-  # Standard command
-  python3.14 scripts/test_runner.py
-
-  # On Windows (using the Python Launcher)
-  py -3.14 scripts/test_runner.py
-  ```
-
-* **Run Live Local Home Assistant** (runs a local HA instance preloaded with the integration)
-  ```bash
-  # Standard command
-  python3.14 scripts/test_runner.py --run
-
-  # On Windows (using the Python Launcher)
-  py -3.14 scripts/test_runner.py --run
-  ```
-  Once the server starts, navigate to `http://localhost:8123` in your browser.
-
-### Advanced Options
-
-| Flag | Description | Default |
-| :--- | :--- | :--- |
-| `-v`, `--version` | Target Home Assistant version (or `"latest"`) | `2026.5.0` |
-| `--port` | Port to run the live Home Assistant instance on | `8123` |
-| `--clean` | Force re-creation of the virtual environment | |
-
-*Example (testing a different HA version):*
-```bash
-py -3.14 scripts/test_runner.py --version 2026.6.0
+```yaml
+logger:
+  logs:
+    custom_components.rflink_ui: debug
 ```
 
-### Code Style & Linting
+**A sensor's "last updated" never changes**
+Home Assistant only records a change when the value changes. Turn on **Update on
+every reading** for that device, or use its **Last seen** sensor, which always
+reflects the most recent packet.
 
-We use [Ruff](https://beta.ruff.rs/docs/) and [Black](https://github.com/psf/black) to enforce style consistency and linting checks.
+**A sensor gets a new device after a battery change**
+For F007_TH this is handled automatically through the channel. For other
+protocols, reconfigure the device and put the new ID in **Additional IDs**.
 
-* **Lint Checks (Ruff)**
-  ```bash
-  # Check for issues
-  ruff check custom_components/
+**Sending a command does nothing**
+Increase **Command repetitions**. Cheap receivers often need the command two or
+three times.
 
-  # Auto-fix fixable issues
-  ruff check custom_components/ --fix
-  ```
+### Known limitations
 
-* **Code Formatting (Black)**
-  ```bash
-  # Check formatting
-  black --check custom_components/
+- Outgoing commands are fire and forget. RFLink does not report whether a device
+  actually reacted, so switches, lights and covers use assumed state.
+- The transmitter entity cannot send raw timing sequences; RFLink only speaks its
+  own protocol names. Use `send_command` or `send_raw`.
+- Sub-devices are identified by their RFLink ID. If a protocol changes the ID of
+  a device, add the new ID as an alias.
 
-  # Auto-format files
-  black custom_components/
-  ```
+---
 
+## Upgrading from 1.x
 
+The first start after the update migrates automatically:
+
+- Devices stored in the old options dictionaries become config subentries.
+- Existing entity IDs, names and history are preserved.
+- Extra measurements that used to be attributes on the temperature entity
+  (wind, pressure, rain rate and so on) become entities of their own. Update
+  templates and automations that read those attributes.
+- The config entry gains a unique ID so the same gateway cannot be added twice.
+
+---
+
+## Development
+
+```bash
+pip install -r requirements_test.txt
+
+pytest                                   # run the test suite
+ruff check custom_components tests       # lint
+ruff format custom_components tests      # format
+python scripts/generate_brand.py         # regenerate the brand images
+```
+
+`scripts/test_runner.py` does the same thing in a throwaway virtualenv if you
+prefer not to install the dependencies globally.
+
+---
+
+## Contributing
+
+Pull requests are welcome. Adding a new measurement usually means one entry in
+`SENSOR_TYPES` in `custom_components/rflink_ui/sensor.py` plus a name in
+`strings.json`; please include the raw packet from your device in the PR.
+
+## Credits
+
+- [@guanaco0403](https://github.com/guanaco0403) — author and maintainer
+- [@bazeman101](https://github.com/bazeman101) — cover platform
+- Value decoding follows the [python-rflink](https://github.com/aequitas/python-rflink) reference implementation
+
+## License
+
+MIT — see [LICENSE](LICENSE).

@@ -1,0 +1,51 @@
+[project]
+name = "rflink-ui"
+version = "2.0.0"
+description = "A fully UI driven Home Assistant integration for Arduino RFLink gateways"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.13"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q"
+filterwarnings = ["ignore::pytest.PytestAssertRewriteWarning"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+  "B",   # flake8-bugbear
+  "C4",  # flake8-comprehensions
+  "D",   # pydocstyle
+  "E",   # pycodestyle errors
+  "F",   # pyflakes
+  "I",   # isort
+  "PL",  # pylint
+  "RUF", # ruff specific
+  "SIM", # flake8-simplify
+  "UP",  # pyupgrade
+  "W",   # pycodestyle warnings
+]
+ignore = [
+  "D203",
+  "D213",
+  "PLR0913", # entity constructors legitimately take several arguments
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D100", "D102", "D103", "D107", "PLR2004"]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+known-first-party = ["custom_components", "tests"]
+combine-as-imports = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ruff.format]
+docstring-code-format = true

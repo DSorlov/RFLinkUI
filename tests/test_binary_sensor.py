@@ -1,49 +1,94 @@
-import asyncio
+"""Tests for the binary sensor platform."""
 
+from __future__ import annotations
+
+from datetime import timedelta
+
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.const import STATE_OFF, STATE_ON
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
-from custom_components.rflink_ui import DOMAIN
+from custom_components.rflink_ui.const import (
+    SUBENTRY_TYPE_BINARY_SENSOR,
+    SUBENTRY_TYPE_SENSOR,
+)
+
+from .conftest import feed, make_entry, setup_entry, subentry
 
 
-async def test_connection_binary_sensor(hass, mock_serial_connection):
-    """Test the RFLink connection status binary sensor."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"port": "COM1"},
-        options={"switches": {}, "sensors": {}},
-    )
-    entry.add_to_hass(hass)
+async def test_connection_sensor(hass: HomeAssistant, mock_serial) -> None:
+    """The gateway exposes its connection state."""
+    entry = make_entry()
+    await setup_entry(hass, entry)
 
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    await asyncio.sleep(0.01)
-
-    # 1. Verify connection status sensor was created and is ON (since serial connected successfully in mock)
-    state = hass.states.get("binary_sensor.rflink_com1_connection_status")
+    state = hass.states.get("binary_sensor.rflink_dev_ttyusb_test_connection_status")
     assert state is not None
     assert state.state == STATE_ON
-    assert state.attributes.get("device_class") == "connectivity"
 
-    # 2. Simulate disconnection dispatcher signal
-    from homeassistant.helpers.dispatcher import dispatcher_send
-    dispatcher_send(
-        hass,
-        f"rflink_connection_{entry.entry_id}",
-        False
+
+async def test_command_binary_sensor(hass: HomeAssistant, mock_serial) -> None:
+    """A door contact follows ON and OFF commands."""
+    entry = make_entry(
+        [
+            subentry(
+                SUBENTRY_TYPE_BINARY_SENSOR,
+                "Kaku_41_1",
+                "Front door",
+                device_class="door",
+            )
+        ]
     )
+    await setup_entry(hass, entry)
+
+    assert hass.states.get("binary_sensor.front_door").state == STATE_OFF
+
+    feed(hass, entry, "20;01;Kaku;ID=41;SWITCH=1;CMD=ON;")
+    await hass.async_block_till_done()
+    assert hass.states.get("binary_sensor.front_door").state == STATE_ON
+    assert (
+        hass.states.get("binary_sensor.front_door").attributes["device_class"] == "door"
+    )
+
+
+async def test_off_delay(
+    hass: HomeAssistant, mock_serial, freezer: FrozenDateTimeFactory
+) -> None:
+    """A trigger only sensor switches itself off again."""
+    entry = make_entry(
+        [
+            subentry(
+                SUBENTRY_TYPE_BINARY_SENSOR,
+                "Kaku_41_1",
+                "Hallway motion",
+                device_class="motion",
+                off_delay=30,
+            )
+        ]
+    )
+    await setup_entry(hass, entry)
+
+    feed(hass, entry, "20;01;Kaku;ID=41;SWITCH=1;CMD=ON;")
+    await hass.async_block_till_done()
+    assert hass.states.get("binary_sensor.hallway_motion").state == STATE_ON
+
+    freezer.tick(timedelta(seconds=31))
+    async_fire_time_changed(hass)
     await hass.async_block_till_done()
 
-    state = hass.states.get("binary_sensor.rflink_com1_connection_status")
-    assert state.state == STATE_OFF
+    assert hass.states.get("binary_sensor.hallway_motion").state == STATE_OFF
 
-    # 3. Simulate reconnection dispatcher signal
-    dispatcher_send(
-        hass,
-        f"rflink_connection_{entry.entry_id}",
-        True
-    )
+
+async def test_boolean_field_becomes_binary_sensor(
+    hass: HomeAssistant, mock_serial
+) -> None:
+    """A PIR field on a sensor device gets its own binary sensor."""
+    entry = make_entry([subentry(SUBENTRY_TYPE_SENSOR, "SmokeSensor_12", "Kitchen")])
+    await setup_entry(hass, entry)
+
+    feed(hass, entry, "20;01;SmokeSensor;ID=12;SMOKEALERT=ON;")
     await hass.async_block_till_done()
 
-    state = hass.states.get("binary_sensor.rflink_com1_connection_status")
+    state = hass.states.get("binary_sensor.kitchen_smoke")
+    assert state is not None
     assert state.state == STATE_ON

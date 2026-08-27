@@ -1,0 +1,33 @@
+{
+  "services": {
+    "send_command": "mdi:radio-tower",
+    "send_raw": "mdi:console-line",
+    "simulate_packet": "mdi:test-tube"
+  },
+  "entity": {
+    "sensor": {
+      "average_windspeed": { "default": "mdi:weather-windy" },
+      "battery": {
+        "default": "mdi:battery-unknown",
+        "state": { "ok": "mdi:battery", "low": "mdi:battery-alert" }
+      },
+      "doorbell_melody": { "default": "mdi:music-note" },
+      "humidity_status": { "default": "mdi:water-percent" },
+      "last_seen": { "default": "mdi:clock-check-outline" },
+      "meter_value": { "default": "mdi:counter" },
+      "noise_level": { "default": "mdi:volume-high" },
+      "rain_rate": { "default": "mdi:weather-pouring" },
+      "total_rain": { "default": "mdi:weather-rainy" },
+      "uv_intensity": { "default": "mdi:weather-sunny-alert" },
+      "weather_forecast": { "default": "mdi:weather-partly-cloudy" },
+      "windchill": { "default": "mdi:snowflake-thermometer" },
+      "winddirection": { "default": "mdi:compass-outline" },
+      "windgusts": { "default": "mdi:weather-windy-variant" },
+      "windspeed": { "default": "mdi:weather-windy" },
+      "windtemp": { "default": "mdi:thermometer" }
+    },
+    "radio_frequency": {
+      "transmitter": { "default": "mdi:radio-tower" }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+# Runtime requirements, mirrored from custom_components/rflink_ui/manifest.json
+pyserial-asyncio-fast>=0.16
+pyserial>=3.5
+
+# Test and lint tooling
+homeassistant>=2026.5.4
+pytest>=8.0.0
+pytest-homeassistant-custom-component>=0.13.357
+rf-protocols>=4.3.0
+ruff==0.14.2
+codespell==2.4.1
+
+# Only needed by scripts/generate_brand.py
+Pillow>=11.0.0

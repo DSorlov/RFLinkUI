@@ -1,193 +1,437 @@
-"""Sensor platform for RFLink UI."""
+"""Sensor platform for RFLink UI.
 
+Every measurement in an RFLink packet becomes its own entity instead of an
+attribute, and entities appear automatically as new fields are received.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
 import logging
 
 from homeassistant.components.sensor import (
-    SensorDeviceClass,
-    SensorStateClass,
     RestoreSensor,
+    SensorDeviceClass,
+    SensorEntity,
+    SensorEntityDescription,
+    SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigSubentry
 from homeassistant.const import (
-    UnitOfTemperature,
-    UnitOfPrecipitationDepth,
+    DEGREE,
+    LIGHT_LUX,
     PERCENTAGE,
+    UV_INDEX,
+    EntityCategory,
+    UnitOfElectricCurrent,
+    UnitOfElectricPotential,
+    UnitOfLength,
+    UnitOfPower,
+    UnitOfPrecipitationDepth,
+    UnitOfPressure,
+    UnitOfRatio,
+    UnitOfSoundPressure,
+    UnitOfSpeed,
+    UnitOfTemperature,
+    UnitOfVolumetricFlux,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.util import dt as dt_util
 
-from . import DOMAIN
+from .const import CONF_FORCE_UPDATE, SIGNAL_DEVICE_UPDATE, SUBENTRY_TYPE_SENSOR
+from .entity import RFLinkEntity
+from .gateway import RFLinkConfigEntry, RFLinkGateway, async_subentry_device_ids
+from .protocol import RFLinkPacket, convert_value
 
 _LOGGER = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, kw_only=True)
+class RFLinkSensorEntityDescription(SensorEntityDescription):
+    """Describes an RFLink sensor, keyed by its RFLink payload field."""
+
+    rflink_key: str
+
+
+def _description(
+    rflink_key: str, key: str, **kwargs: object
+) -> RFLinkSensorEntityDescription:
+    return RFLinkSensorEntityDescription(
+        rflink_key=rflink_key, key=key, translation_key=key, **kwargs
+    )
+
+
+#: Maps an RFLink payload field onto the entity it should create.
+SENSOR_TYPES: dict[str, RFLinkSensorEntityDescription] = {
+    description.rflink_key: description
+    for description in (
+        _description(
+            "TEMP",
+            "temperature",
+            device_class=SensorDeviceClass.TEMPERATURE,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        ),
+        _description(
+            "HUM",
+            "humidity",
+            device_class=SensorDeviceClass.HUMIDITY,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=PERCENTAGE,
+        ),
+        _description(
+            "BARO",
+            "barometric_pressure",
+            device_class=SensorDeviceClass.ATMOSPHERIC_PRESSURE,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfPressure.HPA,
+        ),
+        _description(
+            "HSTATUS",
+            "humidity_status",
+            device_class=SensorDeviceClass.ENUM,
+            options=["normal", "comfortable", "dry", "wet", "unknown"],
+        ),
+        _description(
+            "BFORECAST",
+            "weather_forecast",
+            device_class=SensorDeviceClass.ENUM,
+            options=[
+                "no_info",
+                "sunny",
+                "partly_cloudy",
+                "cloudy",
+                "rain",
+                "unknown",
+            ],
+        ),
+        _description(
+            "UV",
+            "uv_intensity",
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UV_INDEX,
+        ),
+        _description(
+            "LUX",
+            "light_intensity",
+            device_class=SensorDeviceClass.ILLUMINANCE,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=LIGHT_LUX,
+        ),
+        _description(
+            "BAT",
+            "battery",
+            device_class=SensorDeviceClass.ENUM,
+            options=["ok", "low"],
+            entity_category=EntityCategory.DIAGNOSTIC,
+        ),
+        _description(
+            "RAIN",
+            "total_rain",
+            device_class=SensorDeviceClass.PRECIPITATION,
+            state_class=SensorStateClass.TOTAL_INCREASING,
+            native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+        ),
+        _description(
+            "RAINTOT",
+            "total_rain",
+            device_class=SensorDeviceClass.PRECIPITATION,
+            state_class=SensorStateClass.TOTAL_INCREASING,
+            native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+        ),
+        _description(
+            "RAINRATE",
+            "rain_rate",
+            device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
+        ),
+        _description(
+            "WINSP",
+            "windspeed",
+            device_class=SensorDeviceClass.WIND_SPEED,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfSpeed.KILOMETERS_PER_HOUR,
+        ),
+        _description(
+            "AWINSP",
+            "average_windspeed",
+            device_class=SensorDeviceClass.WIND_SPEED,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfSpeed.KILOMETERS_PER_HOUR,
+        ),
+        _description(
+            "WINGS",
+            "windgusts",
+            device_class=SensorDeviceClass.WIND_SPEED,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfSpeed.KILOMETERS_PER_HOUR,
+        ),
+        _description(
+            "WINDIR",
+            "winddirection",
+            device_class=SensorDeviceClass.WIND_DIRECTION,
+            state_class=SensorStateClass.MEASUREMENT_ANGLE,
+            native_unit_of_measurement=DEGREE,
+        ),
+        _description(
+            "WINCHL",
+            "windchill",
+            device_class=SensorDeviceClass.TEMPERATURE,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        ),
+        _description(
+            "WINTMP",
+            "windtemp",
+            device_class=SensorDeviceClass.TEMPERATURE,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        ),
+        _description(
+            "CO2",
+            "co2_air_quality",
+            device_class=SensorDeviceClass.CO2,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfRatio.PARTS_PER_MILLION,
+        ),
+        _description(
+            "SOUND",
+            "noise_level",
+            device_class=SensorDeviceClass.SOUND_PRESSURE,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfSoundPressure.DECIBEL,
+        ),
+        _description(
+            "WATT",
+            "watt",
+            device_class=SensorDeviceClass.POWER,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfPower.WATT,
+        ),
+        _description(
+            "KWATT",
+            "kilowatt",
+            device_class=SensorDeviceClass.POWER,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        ),
+        _description(
+            "CURRENT",
+            "current_phase_1",
+            device_class=SensorDeviceClass.CURRENT,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        ),
+        _description(
+            "CURRENT2",
+            "current_phase_2",
+            device_class=SensorDeviceClass.CURRENT,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        ),
+        _description(
+            "CURRENT3",
+            "current_phase_3",
+            device_class=SensorDeviceClass.CURRENT,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        ),
+        _description(
+            "VOLT",
+            "voltage",
+            device_class=SensorDeviceClass.VOLTAGE,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        ),
+        _description(
+            "DIST",
+            "distance",
+            device_class=SensorDeviceClass.DISTANCE,
+            state_class=SensorStateClass.MEASUREMENT,
+            native_unit_of_measurement=UnitOfLength.CENTIMETERS,
+        ),
+        _description(
+            "METER",
+            "meter_value",
+            state_class=SensorStateClass.TOTAL_INCREASING,
+        ),
+        _description(
+            "CHIME",
+            "doorbell_melody",
+            entity_category=EntityCategory.DIAGNOSTIC,
+        ),
+    )
+}
+
+LAST_SEEN_DESCRIPTION = RFLinkSensorEntityDescription(
+    rflink_key="",
+    key="last_seen",
+    translation_key="last_seen",
+    device_class=SensorDeviceClass.TIMESTAMP,
+    entity_category=EntityCategory.DIAGNOSTIC,
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: RFLinkConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the RFLink sensor platform."""
-    sensors = entry.options.get("sensors", {})
-
-    entities = []
-    for device_id, name in sensors.items():
-        entities.append(RFLinkSensor(entry.entry_id, device_id, name, "temperature"))
-        entities.append(RFLinkSensor(entry.entry_id, device_id, name, "humidity"))
-        entities.append(RFLinkSensor(entry.entry_id, device_id, name, "battery"))
-        entities.append(RFLinkSensor(entry.entry_id, device_id, name, "total_rain"))
-
-    if entities:
-        async_add_entities(entities)
-
-
-class RFLinkSensor(RestoreSensor):
-    """Representation of an RFLink sensor."""
-
-    _attr_has_entity_name = True
-    _attr_should_poll = False
-
-    def __init__(
-        self, entry_id: str, device_id: str, name: str, sensor_type: str
-    ) -> None:
-        """Initialize the sensor."""
-        self._device_id = device_id
-        self._original_name = name
-        self._sensor_type = sensor_type
-
-        # Name of the entity, e.g. "Temperature" or "Humidity"
-        if sensor_type == "temperature":
-            self._attr_name = "Temperature"
-            self._attr_device_class = SensorDeviceClass.TEMPERATURE
-            self._attr_state_class = SensorStateClass.MEASUREMENT
-            self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-        elif sensor_type == "humidity":
-            self._attr_name = "Humidity"
-            self._attr_device_class = SensorDeviceClass.HUMIDITY
-            self._attr_state_class = SensorStateClass.MEASUREMENT
-            self._attr_native_unit_of_measurement = PERCENTAGE
-        elif sensor_type == "battery":
-            self._attr_name = "Battery"
-            self._attr_icon = "mdi:battery"
-        elif sensor_type in ["total_rain", "rain"]:
-            self._attr_name = "Total Rain"
-            self._attr_device_class = SensorDeviceClass.PRECIPITATION
-            self._attr_state_class = SensorStateClass.TOTAL_INCREASING
-            self._attr_native_unit_of_measurement = UnitOfPrecipitationDepth.MILLIMETERS
-        else:
-            self._attr_name = sensor_type.capitalize()
-
-        self._attr_unique_id = f"rflink_sensor_{sensor_type}_{device_id}"
-        self._attr_native_value = None
-        self._attr_extra_state_attributes = {}
-
-        # device_id could be F007_TH_45291. Splitting by "_" gives parts.
-        parts = device_id.rsplit("_", 1)
-        if len(parts) >= 2:
-            self._protocol = parts[0]
-            self._rflink_id = parts[1]
-        else:
-            self._protocol = "Unknown"
-            self._rflink_id = "0"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information about this RFLink device."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
-            name=self._original_name,
-            manufacturer="RFLink",
-            model=self._protocol,
-        )
-
-    async def async_added_to_hass(self) -> None:
-        """Run when entity about to be added to hass."""
-        await super().async_added_to_hass()
-
-        last_sensor_data = await self.async_get_last_sensor_data()
-        if last_sensor_data is not None:
-            self._attr_native_value = last_sensor_data.native_value
-
-        last_state = await self.async_get_last_state()
-        if last_state is not None:
-            # Restore attributes like battery, etc.
-            self._attr_extra_state_attributes = dict(last_state.attributes)
-
-        self.async_on_remove(
-            async_dispatcher_connect(
-                self.hass,
-                f"rflink_update_{self._device_id}",
-                self._handle_rflink_update,
-            )
-        )
+    gateway = entry.runtime_data
 
     @callback
-    def _handle_rflink_update(self, data_dict: dict[str, str]) -> None:
-        """Handle updated data from RFLink."""
-        _LOGGER.debug(
-            "Sensor %s (%s) received update: %s",
-            self._device_id,
-            self._sensor_type,
-            data_dict,
-        )
+    def _build(gateway: RFLinkGateway, subentry: ConfigSubentry) -> list[SensorEntity]:
+        manager = _SensorManager(entry, gateway, subentry, async_add_entities)
+        return manager.async_setup()
 
-        attributes = dict(self._attr_extra_state_attributes)
-        has_update = False
+    gateway.async_register_platform(SUBENTRY_TYPE_SENSOR, async_add_entities, _build)
 
-        if self._sensor_type == "temperature":
-            if "TEMP" in data_dict:
-                try:
-                    temp_hex = data_dict["TEMP"]
-                    temp_int = int(temp_hex, 16)
-                    if temp_int & 0x8000:
-                        temp_val = -(temp_int & 0x7FFF) / 10.0
-                    else:
-                        temp_val = temp_int / 10.0
-                    self._attr_native_value = temp_val
-                    has_update = True
-                except ValueError:
-                    attributes["temperature_raw"] = data_dict["TEMP"]
 
-        elif self._sensor_type == "humidity":
-            if "HUM" in data_dict:
-                try:
-                    hum_int = int(data_dict["HUM"])
-                    self._attr_native_value = hum_int
-                    has_update = True
-                except ValueError:
-                    attributes["humidity_raw"] = data_dict["HUM"]
+class _SensorManager:
+    """Create sensor entities for a device as new fields show up."""
 
-        elif self._sensor_type == "battery":
-            if "BAT" in data_dict:
-                self._attr_native_value = data_dict["BAT"]
-                has_update = True
+    def __init__(
+        self,
+        entry: RFLinkConfigEntry,
+        gateway: RFLinkGateway,
+        subentry: ConfigSubentry,
+        async_add_entities: AddConfigEntryEntitiesCallback,
+    ) -> None:
+        self._entry = entry
+        self._gateway = gateway
+        self._subentry = subentry
+        self._async_add_entities = async_add_entities
+        self._known: set[str] = set()
 
-        elif self._sensor_type in ["total_rain", "rain"]:
-            if "RAIN" in data_dict:
-                try:
-                    rain_hex = data_dict["RAIN"]
-                    rain_int = int(rain_hex, 16)
-                    self._attr_native_value = rain_int / 10.0
-                    has_update = True
-                except ValueError:
-                    try:
-                        self._attr_native_value = float(data_dict["RAIN"]) / 10.0
-                        has_update = True
-                    except ValueError:
-                        attributes["rain_raw"] = data_dict["RAIN"]
+    @callback
+    def async_setup(self) -> list[SensorEntity]:
+        """Return the initial entities and start watching for new fields."""
+        entities: list[SensorEntity] = [
+            RFLinkLastSeenSensor(self._gateway, self._subentry)
+        ]
+        for packet in self._known_packets():
+            entities.extend(self._async_entities_for(packet))
 
-        if "BAT" in data_dict:
-            attributes["battery"] = data_dict["BAT"]
-            has_update = True
+        entry_id = self._entry.entry_id
+        for device_id in self._device_ids():
+            self._entry.async_on_unload(
+                async_dispatcher_connect(
+                    self._gateway.hass,
+                    SIGNAL_DEVICE_UPDATE.format(entry_id, device_id),
+                    self._async_packet_received,
+                )
+            )
+        return entities
 
-        # Store any other unknown values
-        for key, value in data_dict.items():
-            if key not in ["ID", "TEMP", "HUM", "BAT", "RAIN"]:
-                attributes[key.lower()] = value
-                has_update = True
+    def _device_ids(self) -> list[str]:
+        return async_subentry_device_ids(self._subentry)
 
-        self._attr_extra_state_attributes = attributes
+    def _known_packets(self) -> list[RFLinkPacket]:
+        """Return the most recent packet seen for this device."""
+        return [
+            packet
+            for device_id in self._device_ids()
+            if (packet := self._gateway.last_packet.get(device_id)) is not None
+        ]
 
-        if has_update or self._attr_native_value is not None:
-            self.async_write_ha_state()
+    @callback
+    def _async_entities_for(self, packet: RFLinkPacket) -> list[SensorEntity]:
+        entities: list[SensorEntity] = []
+        for rflink_key in packet.sensor_keys:
+            description = SENSOR_TYPES.get(rflink_key)
+            if description is None or description.key in self._known:
+                continue
+            self._known.add(description.key)
+            entities.append(
+                RFLinkSensor(self._gateway, self._subentry, description, packet)
+            )
+        return entities
+
+    @callback
+    def _async_packet_received(self, packet: RFLinkPacket) -> None:
+        """Add entities for measurements that were not seen before."""
+        if new_entities := self._async_entities_for(packet):
+            _LOGGER.debug(
+                "Adding %s new sensor entities for %s",
+                len(new_entities),
+                self._subentry.title,
+            )
+            self._async_add_entities(
+                new_entities, config_subentry_id=self._subentry.subentry_id
+            )
+
+
+class RFLinkSensorBase(RFLinkEntity, SensorEntity):
+    """Common bits for RFLink sensors."""
+
+    has_switch_component = False
+    entity_description: RFLinkSensorEntityDescription
+
+    def __init__(
+        self,
+        gateway: RFLinkGateway,
+        subentry: ConfigSubentry,
+        description: RFLinkSensorEntityDescription,
+        initial_packet: RFLinkPacket | None = None,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(gateway, subentry, initial_packet)
+        self.entity_description = description
+        self._attr_unique_id = f"rflink_sensor_{description.key}_{self._device_id}"
+        self._attr_force_update = subentry.data.get(CONF_FORCE_UPDATE, False)
+
+
+class RFLinkSensor(RFLinkSensorBase, RestoreSensor):
+    """A single measurement reported by an RFLink device."""
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the previous value."""
+        await super().async_added_to_hass()
+        if (last_data := await self.async_get_last_sensor_data()) is not None:
+            self._attr_native_value = last_data.native_value
+
+    @callback
+    def async_handle_packet(self, packet: RFLinkPacket) -> None:
+        """Update the value from a received packet."""
+        raw = packet.fields.get(self.entity_description.rflink_key)
+        if raw is None:
+            return
+
+        value = convert_value(self.entity_description.rflink_key, raw)
+        if self.entity_description.device_class is SensorDeviceClass.ENUM:
+            value = str(value).lower()
+            if value not in (self.entity_description.options or []):
+                value = "unknown"
+
+        self._attr_native_value = value
+        self._attr_available = True
+        self.async_write_ha_state()
+
+
+class RFLinkLastSeenSensor(RFLinkSensorBase):
+    """Timestamp of the last packet received from a device."""
+
+    def __init__(self, gateway: RFLinkGateway, subentry: ConfigSubentry) -> None:
+        """Initialize the sensor."""
+        super().__init__(gateway, subentry, LAST_SEEN_DESCRIPTION)
+        self._attr_force_update = False
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Return when this device was last heard from."""
+        for device_id in (self._device_id, *self._aliases):
+            if timestamp := self.gateway.last_seen.get(device_id):
+                return timestamp
+        return None
+
+    @callback
+    def async_handle_packet(self, packet: RFLinkPacket) -> None:
+        """Refresh the timestamp."""
+        self.gateway.last_seen[self._device_id] = dt_util.utcnow()
+        self._attr_available = True
+        self.async_write_ha_state()

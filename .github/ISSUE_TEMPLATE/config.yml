@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or help
+    url: https://github.com/guanaco0403/Home-Assistant-Rflink-UI/discussions
+    about: Ask questions and get help from the community here.
+  - name: RFLink protocol reference
+    url: https://www.rflink.nl/protref.php
+    about: The list of protocols and payload fields supported by RFLink firmware.

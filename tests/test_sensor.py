@@ -1,155 +1,116 @@
-import asyncio
+"""Tests for the sensor platform."""
 
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from __future__ import annotations
 
-from custom_components.rflink_ui import DOMAIN
+from homeassistant.core import HomeAssistant
+
+from custom_components.rflink_ui.const import SUBENTRY_TYPE_SENSOR
+
+from .conftest import feed, make_entry, setup_entry, subentry
+
+WEATHER_PACKET = (
+    "20;12;Alecto V1;ID=0334;TEMP=00ba;HUM=55;BARO=03e8;"
+    "WINSP=0032;WINDIR=4;RAIN=0010;BAT=OK;"
+)
 
 
-async def test_sensor_setup_and_updates(hass, mock_serial_connection):
-    """Test setting up a sensor and receiving temperature and humidity updates."""
-    # Define a sensor in options
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"port": "COM1"},
-        options={
-            "switches": {},
-            "sensors": {"Oregon_0A4C": "Garden Sensor"},
-        },
+async def test_measurements_become_separate_entities(
+    hass: HomeAssistant, mock_serial
+) -> None:
+    """Every field in the packet gets its own entity, not an attribute."""
+    entry = make_entry(
+        [subentry(SUBENTRY_TYPE_SENSOR, "Alecto V1_0334", "Weather station")]
     )
-    entry.add_to_hass(hass)
+    await setup_entry(hass, entry)
 
-    assert await hass.config_entries.async_setup(entry.entry_id)
+    feed(hass, entry, WEATHER_PACKET)
     await hass.async_block_till_done()
-    await asyncio.sleep(0.01)
 
-    # 1. Verify entity creation (Temperature, Humidity, and Battery entities should be created)
-    temp_state = hass.states.get("sensor.garden_sensor_temperature")
-    assert temp_state is not None
-    assert temp_state.state == "unknown"
-    assert temp_state.attributes.get("unit_of_measurement") == "°C"
+    assert hass.states.get("sensor.weather_station_temperature").state == "18.6"
+    assert hass.states.get("sensor.weather_station_humidity").state == "55"
+    assert hass.states.get("sensor.weather_station_barometric_pressure").state == "1000"
+    assert hass.states.get("sensor.weather_station_wind_speed").state == "5.0"
+    assert hass.states.get("sensor.weather_station_wind_direction").state == "90.0"
+    assert hass.states.get("sensor.weather_station_total_rain").state == "1.6"
+    assert hass.states.get("sensor.weather_station_battery_status").state == "ok"
 
-    hum_state = hass.states.get("sensor.garden_sensor_humidity")
-    assert hum_state is not None
-    assert hum_state.state == "unknown"
-    assert hum_state.attributes.get("unit_of_measurement") == "%"
+    temperature = hass.states.get("sensor.weather_station_temperature")
+    assert "humidity" not in temperature.attributes
+    assert temperature.attributes["unit_of_measurement"] == "°C"
 
-    battery_state = hass.states.get("sensor.garden_sensor_battery")
-    assert battery_state is not None
-    assert battery_state.state == "unknown"
-    assert battery_state.attributes.get("icon") == "mdi:battery"
 
-    # 2. Simulate dispatcher update (Positive temperature + humidity + OK battery)
-    # TEMP = "00ba" hex = 186 dec -> 18.6°C
-    # HUM = "40" -> 40%
-    # BAT = "OK"
-    # RSSI = "6" (custom/unknown key)
-    from homeassistant.helpers.dispatcher import dispatcher_send
-    dispatcher_send(
-        hass,
-        "rflink_update_Oregon_0A4C",
-        {
-            "TEMP": "00ba",
-            "HUM": "40",
-            "BAT": "OK",
-            "RSSI": "6"
-        }
+async def test_new_field_creates_entity_later(hass: HomeAssistant, mock_serial) -> None:
+    """A measurement that only appears later still gets an entity."""
+    entry = make_entry([subentry(SUBENTRY_TYPE_SENSOR, "Xiron_2203", "Bedroom")])
+    await setup_entry(hass, entry)
+
+    feed(hass, entry, "20;01;Xiron;ID=2203;TEMP=00dc;")
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.bedroom_humidity") is None
+
+    feed(hass, entry, "20;02;Xiron;ID=2203;TEMP=00dc;HUM=50;")
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.bedroom_humidity").state == "50"
+
+
+async def test_aliases_feed_the_same_device(hass: HomeAssistant, mock_serial) -> None:
+    """A second protocol id updates the same entities."""
+    entry = make_entry(
+        [
+            subentry(
+                SUBENTRY_TYPE_SENSOR,
+                "Xiron_4b02",
+                "Bedroom",
+                aliases=["Tunex_4b02"],
+            )
+        ]
     )
+    await setup_entry(hass, entry)
+
+    feed(hass, entry, "20;01;Tunex;ID=4b02;TEMP=00c8;")
     await hass.async_block_till_done()
 
-    # Verify state updates
-    temp_state = hass.states.get("sensor.garden_sensor_temperature")
-    assert temp_state.state == "18.6"
-    assert temp_state.attributes.get("battery") == "OK"
-    assert temp_state.attributes.get("rssi") == "6"
+    assert hass.states.get("sensor.bedroom_temperature").state == "20.0"
 
-    hum_state = hass.states.get("sensor.garden_sensor_humidity")
-    assert hum_state.state == "40"
-    assert hum_state.attributes.get("battery") == "OK"
 
-    battery_state = hass.states.get("sensor.garden_sensor_battery")
-    assert battery_state.state == "OK"
+async def test_last_seen_sensor(hass: HomeAssistant, mock_serial) -> None:
+    """A diagnostic timestamp tracks when the device was last heard."""
+    entry = make_entry([subentry(SUBENTRY_TYPE_SENSOR, "Xiron_2203", "Bedroom")])
+    await setup_entry(hass, entry)
 
-    # 3. Simulate dispatcher update (Negative temperature + LOW battery)
-    # -5.4°C = 54 dec. High bit 0x8000 set -> 0x8036 hex = "8036"
-    dispatcher_send(
-        hass,
-        "rflink_update_Oregon_0A4C",
-        {
-            "TEMP": "8036",
-            "BAT": "LOW",
-        }
+    assert hass.states.get("sensor.bedroom_last_seen").state == "unknown"
+
+    feed(hass, entry, "20;01;Xiron;ID=2203;TEMP=00dc;")
+    await hass.async_block_till_done()
+
+    assert hass.states.get("sensor.bedroom_last_seen").state != "unknown"
+
+
+async def test_f007_th_channel_device(hass: HomeAssistant, mock_serial) -> None:
+    """An F007_TH sensor is addressed by its stable channel."""
+    entry = make_entry([subentry(SUBENTRY_TYPE_SENSOR, "F007_TH_CH7", "Shed")])
+    await setup_entry(hass, entry)
+
+    feed(hass, entry, "20;01;F007_TH;ID=45246;TEMP=00ba;HUM=40;")
+    await hass.async_block_till_done()
+
+    assert hass.states.get("sensor.shed_temperature").state == "18.6"
+
+
+async def test_force_update_option(hass: HomeAssistant, mock_serial) -> None:
+    """With force update on, an identical reading still bumps last_updated."""
+    entry = make_entry(
+        [subentry(SUBENTRY_TYPE_SENSOR, "Xiron_2203", "Bedroom", force_update=True)]
     )
+    await setup_entry(hass, entry)
+
+    feed(hass, entry, "20;01;Xiron;ID=2203;TEMP=00dc;")
     await hass.async_block_till_done()
+    first = hass.states.get("sensor.bedroom_temperature")
 
-    temp_state = hass.states.get("sensor.garden_sensor_temperature")
-    assert temp_state.state == "-5.4"
-    assert temp_state.attributes.get("battery") == "LOW"
-
-    battery_state = hass.states.get("sensor.garden_sensor_battery")
-    assert battery_state.state == "LOW"
-
-
-async def test_f007_th_channel_alias(hass, mock_serial_connection):
-    """Test F007_TH sensor setup using stable channel ID (F007_TH_CH7)."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"port": "COM1"},
-        options={
-            "switches": {},
-            "sensors": {"F007_TH_CH7": "Patio Sensor"},
-        },
-    )
-    entry.add_to_hass(hass)
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
+    feed(hass, entry, "20;02;Xiron;ID=2203;TEMP=00dc;")
     await hass.async_block_till_done()
+    second = hass.states.get("sensor.bedroom_temperature")
 
-    # Simulate receiving RFLink packet with raw ID 45246 (lowest hex digit 6 -> CH7)
-    from custom_components.rflink_ui import _process_packet
-    _process_packet(hass, entry.entry_id, "20;62;F007_TH;ID=45246;TEMP=00d2;HUM=55;BAT=OK;")
-    await hass.async_block_till_done()
-
-    temp_state = hass.states.get("sensor.patio_sensor_temperature")
-    assert temp_state is not None
-    assert temp_state.state == "21.0"
-
-    hum_state = hass.states.get("sensor.patio_sensor_humidity")
-    assert hum_state is not None
-    assert hum_state.state == "55"
-
-    battery_state = hass.states.get("sensor.patio_sensor_battery")
-    assert battery_state is not None
-    assert battery_state.state == "OK"
-
-
-async def test_rain_sensor_updates(hass, mock_serial_connection):
-    """Test rain sensor entity creation and RAIN packet parsing."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"port": "COM1"},
-        options={
-            "switches": {},
-            "sensors": {"Auriol Rain_0057": "Rain Gauge"},
-        },
-    )
-    entry.add_to_hass(hass)
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    rain_state = hass.states.get("sensor.rain_gauge_total_rain")
-    assert rain_state is not None
-    assert rain_state.state == "unknown"
-    assert rain_state.attributes.get("unit_of_measurement") == "mm"
-
-    # Simulate RFLink packet: RAIN=0064 -> hex 64 = 100 -> 10.0 mm
-    from custom_components.rflink_ui import _process_packet
-    _process_packet(hass, entry.entry_id, "20;3B;Auriol Rain;ID=0057;RAIN=0064;BAT=OK;")
-    await hass.async_block_till_done()
-
-    rain_state = hass.states.get("sensor.rain_gauge_total_rain")
-    assert rain_state is not None
-    assert rain_state.state == "10.0"
-    assert rain_state.attributes.get("battery") == "OK"
-
-
+    assert first.state == second.state
+    assert second.last_updated > first.last_updated

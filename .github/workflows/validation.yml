@@ -1,38 +1,78 @@
-name: Run multiple checks
+name: Validate
 
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master, dev]
   pull_request:
-    branches:
-      - main
-      - master
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  validation:
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: "3.13"
 
-      - name: Install Requirements
+      - name: Install tooling
+        run: python -m pip install --upgrade pip ruff==0.14.2 codespell==2.4.1
+
+      - name: Ruff check
+        run: ruff check custom_components tests scripts
+
+      - name: Ruff format
+        run: ruff format --check custom_components tests scripts
+
+      - name: Codespell
+        run: >
+          codespell custom_components tests scripts README.md
+          --skip=custom_components/rflink_ui/translations
+          --ignore-words=.codespellignore
+
+  hassfest:
+    name: Hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hacs/action@main
+        with:
+          category: integration
+
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install requirements
         run: |
           python -m pip install --upgrade pip
-          pip install -r ./scripts/requirements_github_workflow.txt
+          pip install -r requirements_test.txt
 
-      - name: Run Ruff linter checks
-        run: ruff check ./custom_components/
-
-      - name: Run Codespell checks
-        run: codespell custom_components/ --skip=custom_components/rflink_ui/translations -I .codespellignore
-
-      - name: Run Python code style with Black checks
-        run: black --check ./custom_components/
+      - name: Run tests
+        run: pytest --cov=custom_components/rflink_ui --cov-report=term-missing

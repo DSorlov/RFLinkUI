@@ -1,0 +1,87 @@
+name: Bug report
+description: Something is not working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much as
+        you can, debug logs in particular make issues much faster to solve.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the problem and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to ...
+        2. Press ...
+        3. See error
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: RFLink UI version
+      placeholder: "2.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      placeholder: "2026.8.3"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install_type
+    attributes:
+      label: Installation type
+      options:
+        - Home Assistant OS
+        - Home Assistant Supervised
+        - Home Assistant Container
+        - Home Assistant Core
+    validations:
+      required: true
+
+  - type: input
+    id: gateway
+    attributes:
+      label: Gateway and connection
+      description: Which RFLink hardware, firmware revision and port do you use?
+      placeholder: "Arduino Mega + R48, /dev/serial/by-id/usb-1a86_USB2.0-Serial-if00-port0"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug logs
+      description: |
+        Add the following to `configuration.yaml`, restart, reproduce the problem
+        and paste the relevant lines here.
+
+        ```yaml
+        logger:
+          logs:
+            custom_components.rflink_ui: debug
+        ```
+      render: text
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: >
+        Optional but very helpful: Settings → Devices & services → RFLink UI →
+        ⋮ → Download diagnostics.
+      render: json

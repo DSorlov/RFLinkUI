@@ -1,34 +1,41 @@
 send_command:
-  name: Send RF command
-  description: Sends a raw RF command via the RFLink transmitter.
   target:
     entity:
       integration: rflink_ui
+      domain: radio_frequency
   fields:
     protocol:
-      name: Protocol
-      description: The RF protocol to use (e.g., Kaku, Cresta).
       required: true
-      example: Kaku
+      example: Unitec
       selector:
         text:
     command:
-      name: Command
-      description: The command payload to send.
       required: true
-      example: 1;ON
+      example: 1a4a;4;ON
+      selector:
+        text:
+
+send_raw:
+  target:
+    entity:
+      integration: rflink_ui
+      domain: radio_frequency
+  fields:
+    packet:
+      required: true
+      example: 10;GPIOset;32;0;ON;
       selector:
         text:
 
 simulate_packet:
-  name: Simulate packet
-  description: Simulates receiving a raw packet from the RFLink gateway for testing.
   fields:
     packet:
-      name: Packet
-      description: The raw RFLink packet string (e.g., 20;01;Kaku;ID=1234abcd;SWITCH=1;CMD=ON;).
       required: true
       example: 20;01;Kaku;ID=1234abcd;SWITCH=1;CMD=ON;
       selector:
         text:
-
+    config_entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: rflink_ui
