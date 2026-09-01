@@ -3,7 +3,7 @@ pyserial-asyncio-fast>=0.16
 pyserial>=3.5
 
 # Test and lint tooling
-homeassistant>=2026.5.4
+homeassistant>=2026.8.3
 pytest>=8.0.0
 pytest-homeassistant-custom-component>=0.13.357
 rf-protocols>=4.3.0
